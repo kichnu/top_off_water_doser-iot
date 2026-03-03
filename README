@@ -1,0 +1,242 @@
+# ESP32-C3 Automated Water Top-Off System
+
+Embedded system for automated aquarium/plant water level management. Built on Seeed Xiao ESP32-C3 with PlatformIO/Arduino framework. Features dual float sensor validation, multi-phase dosing algorithm, web dashboard, IP-based access control, and encrypted credential storage in FRAM.
+
+## Hardware
+
+**Platform:** Seeed Xiao ESP32-C3 (RISC-V, WiFi, 4MB flash)
+
+**Sensors and I/O:**
+- 2x float sensors (NC type, pull-up, active LOW) - independent water level detection
+- 1x pump relay output (HIGH = ON) - controls 12V dosing pump
+- 1x error signal output - pulsed error codes (1 pulse = daily limit, 2 = pump failure)
+- 1x button input (pull-up) - error reset (short press) / provisioning mode (5s hold)
+
+**Peripherals (I2C bus):**
+- DS3231 RTC - hardware clock with battery backup, NTP-synchronized, UTC storage
+- FRAM 32KB - non-volatile storage for credentials (AES-256 encrypted), pump cycle history (ring buffer), settings, error statistics
+
+**Time management:** RTC stores UTC. Display times auto-converted to local timezone (Poland CET/CEST with automatic DST). NTP sync at boot + hourly via IP addresses (DNS-independent). Fallback to ESP32 system time if DS3231 absent.
+
+## Algorithm
+
+The dosing algorithm is a state machine that validates water level drop through multiple phases before activating the pump. Each completed cycle produces a structured data record with timing and sensor diagnostics.
+
+### State Flow
+
+```
+IDLE -> PRE_QUALIFICATION -> SETTLING -> DEBOUNCING -> PUMPING_AND_VERIFY -> LOGGING -> IDLE
+                |                           |                 |
+                v                           v                 v
+          IDLE (silent)              IDLE (false trigger)   ERROR / retry
+```
+
+### Phase 1: Drop Validation
+
+**Pre-qualification** - Fast initial filter. When any sensor reads LOW (water below threshold), the system requires multiple consecutive LOW readings within a short window. Filters out momentary disturbances (waves, vibrations). Failure returns silently to IDLE without logging.
+
+**Settling** - Passive wait period after pre-qualification. No sensor reads - allows water surface to stabilize before precise measurement.
+
+**Debouncing** - Full verification. Both sensors are independently monitored at fixed intervals. Each sensor must produce a required number of consecutive LOW readings to "pass" debounce. Possible outcomes:
+- Both sensors pass -> pump starts (nominal case)
+- One sensor passes, one times out -> pump starts with GAP1_FAIL flag
+- Neither passes -> logged as FALSE_TRIGGER, return to IDLE
+
+**time_gap_1** - Recorded as the time difference between sensor 1 and sensor 2 completing debounce. Indicates how evenly both sensors detected the drop.
+
+### Phase 2: Pump and Release Verification
+
+After debounce, the pump runs for a calculated duration (`SINGLE_DOSE_VOLUME / volumePerSecond`). During pumping, sensors are monitored for HIGH (water rising). Each sensor that triggered the cycle must confirm release (multiple consecutive HIGH readings).
+
+**Outcomes:**
+- All required sensors confirm -> success, log cycle
+- Partial confirmation -> success with RELEASE_FAIL flag for unconfirmed sensor
+- No confirmation within timeout -> WATER_FAIL, retry (up to 3 attempts)
+- All retries exhausted -> ERROR state (requires manual reset via button or web)
+
+**time_gap_2** - Time difference between sensor 1 and sensor 2 confirming release. Indicates pump delivery symmetry.
+
+**water_trigger_time** - Time from pump start to first sensor confirmation. Indicates pump effectiveness and tube/sensor health.
+
+### Safety Limits
+
+- **Daily volume limit** (configurable, default 2000ml) - exceeding triggers ERROR state
+- **Available volume tracking** - tracks remaining water in source container
+- **System disable** - permanent kill switch via web; re-enabled only by clicking again
+- **24h auto-restart** - firmware restarts ESP32 after 24h uptime
+
+### Reported Cycle Data
+
+Each cycle records: unix timestamp, time_gap_1, time_gap_2, water_trigger_time, pump duration, pump attempts, volume (ml), sensor result flags (debounce pass/fail per sensor, release pass/fail per sensor, false trigger), error code. Last ~200 cycles stored in FRAM ring buffer.
+
+## Tech Stack
+
+| Component | Technology |
+|---|---|
+| Platform | PlatformIO, Arduino framework |
+| MCU | ESP32-C3 (Seeed Xiao) |
+| Web server | ESPAsyncWebServer + AsyncTCP |
+| JSON | ArduinoJson 7.x |
+| RTC | RTClib (Adafruit) - DS3231 |
+| Storage | Adafruit FRAM I2C |
+| Encryption | mbedtls (AES-256-CBC, SHA-256) - bundled with ESP-IDF |
+| Auth | SHA-256 password hash, random session tokens, HttpOnly cookies |
+
+## Security and Access Control
+
+### Network Access Model
+
+```
+Incoming request
+  |
+  +-- Trusted VPS IP (WireGuard tunnel) --> full access, no login required
+  |
+  +-- IP on whitelist --> rate limit -> session check -> access / 401
+  |
+  +-- IP NOT on whitelist --> 403 Forbidden (all endpoints, including /login)
+```
+
+**IP whitelist** - Hardcoded list of allowed LAN IPs (`config.cpp`). IPs not on the list are permanently blocked from all endpoints. Whitelisted IPs are additionally exempt from rate limiting and brute-force lockout.
+
+**Trusted VPS proxy** - A single hardcoded IP (WireGuard tunnel endpoint) bypasses all authentication. Designed for reverse proxy access from a VPS, allowing remote management without exposing ESP32 directly to the internet.
+
+**Session authentication** - Login via password (SHA-256 hashed, compared against FRAM-stored hash). Sessions are token-based, bound to client IP, HttpOnly cookie, max 10 sessions total / 3 per IP, configurable timeout (default 30 min).
+
+**Rate limiting** - Max 5 requests/second per IP. After 10 failed login attempts, IP blocked for 60 seconds. Whitelisted IPs bypass both mechanisms.
+
+**Credential storage** - WiFi SSID/password, admin password hash, VPS token, device ID stored in FRAM encrypted with AES-256-CBC using device-specific keys. Configured via Captive Portal.
+
+### Known Limitations
+
+- HTTP only (no TLS) - traffic visible on WiFi network. Mitigated by IP whitelist restricting who can connect.
+- Session tokens generated with `random()` - limited entropy on ESP32.
+- No CSRF protection on POST endpoints.
+- Whitelist is hardcoded - changes require recompilation.
+
+## API Reference
+
+All `/api/*` endpoints require session authentication (cookie). Trusted VPS IP is exempt. Non-whitelisted IPs receive 403 on all endpoints.
+
+### Authentication
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/login` | Login page (HTML) |
+| POST | `/api/login` | Authenticate (`password` form param) -> set session cookie |
+| POST | `/api/logout` | Destroy session |
+
+### Dashboard and Status
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | Dashboard (HTML, redirects to /login if no session) |
+| GET | `/api/status` | Full system status JSON (sensors, pump, algorithm state, RTC, WiFi, heap, uptime) |
+| GET | `/api/health` | Lightweight health check, no session required. Returns `{status, device_name, uptime}`. Used by VPS monitoring |
+
+### Pump Control
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/pump/direct-on` | Turn pump on directly (bypasses algorithm, system-disable, daily limit). Optional `mode=monostable` POST param sets 120s safety timeout instead of configured duration |
+| POST | `/api/pump/direct-off` | Stop pump immediately (direct mode only) |
+| POST | `/api/pump/stop` | Emergency stop (any mode) |
+
+### Configuration
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/pump-settings` | Get pump config (volume/s, cycle durations) |
+| POST | `/api/pump-settings` | Update volume per second (`volume_per_second` param, 0.1-20) |
+| GET/POST | `/api/system-toggle` | GET: system state `{enabled}`. POST: toggle enable/disable (permanent until toggled again) |
+| POST | `/api/system-reset` | Reset algorithm to IDLE from any state. Stops pump safely if running, saves partial cycle to FRAM. Returns `{success, state, message}`. Blocked only during STATE_LOGGING |
+| GET | `/api/fill-water-max` | Get daily volume limit |
+| POST | `/api/set-fill-water-max` | Set daily volume limit (`value` param, 100-10000ml) |
+
+### Volume Tracking
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/daily-volume` | Daily dosed volume, max, last reset day |
+| POST | `/api/reset-daily-volume` | Reset daily counter to 0 |
+| GET | `/api/available-volume` | Source container status (max, current, is_empty) |
+| POST | `/api/set-available-volume` | Set container capacity (`value`, 100-10000ml) |
+| POST | `/api/refill-available-volume` | Mark container as refilled (reset current to max) |
+
+### Statistics and History
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/get-statistics` | Error counters (gap1/gap2/water failures, last reset time) |
+| POST | `/api/reset-statistics` | Reset error counters |
+| GET | `/api/cycle-history` | Full pump cycle history from FRAM (newest first) |
+
+## Build and Deploy
+
+Requires [PlatformIO](https://platformio.org/) (CLI or IDE plugin).
+
+```bash
+# Build firmware
+pio run -e seeed_xiao_esp32c3
+
+# Build and upload
+pio run -e seeed_xiao_esp32c3 -t upload
+
+# Serial monitor (115200 baud)
+pio device monitor
+
+# Clean build
+pio run -e seeed_xiao_esp32c3 -t clean
+```
+
+Single build environment (`seeed_xiao_esp32c3`). Partition scheme: `huge_app.csv`.
+
+## Provisioning (First-Time Setup)
+
+Initial configuration (WiFi credentials, admin password, VPS token) is done via Captive Portal, not hardcoded in firmware.
+
+### Procedure
+
+1. **Enter provisioning mode** - Hold button (GPIO 8) for 5+ seconds during boot. Audio feedback (beep pattern on error signal pin) confirms detection.
+
+2. **Connect to AP** - ESP32 starts WiFi access point:
+   - SSID: `ESP32-WATER-SETUP`
+   - Password: `setup12345`
+   - IP: `192.168.4.1`
+
+3. **Configure** - Open browser, captive portal redirects to setup page. Enter:
+   - Device name (ID)
+   - WiFi SSID and password
+   - Admin password
+   - VPS auth token (optional)
+
+4. **Reboot** - ESP32 restarts in production mode, loads credentials from FRAM, connects to configured WiFi.
+
+Credentials are AES-256 encrypted before writing to FRAM. To reconfigure, repeat the provisioning procedure.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| FRAM not detected | I2C wiring (SDA/SCL), FRAM power (3.3V), I2C address conflict |
+| WiFi not connecting | Re-run provisioning, verify SSID/password, check signal strength |
+| Web inaccessible | Verify your IP is in `ALLOWED_IPS` in `config.cpp`, check ESP32 got IP via serial monitor |
+| RTC battery warning | Replace CR2032 in DS3231 module. Warning persists until physical replacement (OSF flag) |
+| Auth fails after FRAM wipe | Re-run provisioning to program credentials. Without FRAM credentials all logins are blocked |
+| Pump runs but sensors don't confirm | Check float sensor wiring, verify sensor orientation, inspect tube for blockage |
+| ERROR state (LED pulsing) | 1 pulse = daily limit exceeded (resets midnight UTC). 2 pulses = pump failure after 3 retries. Reset via GPIO button (short press) or "System Reset" button in web dashboard |
+
+## Source Structure
+
+```
+src/
+  main.cpp                  Entry point, mode detection, main loop
+  algorithm/                Dosing state machine and cycle data structures
+  config/                   Settings, credentials manager, FRAM-backed storage
+  core/                     Logging utilities
+  crypto/                   AES-256 encryption for FRAM credentials
+  hardware/                 HAL: FRAM controller, pump, RTC, water sensors
+  network/                  WiFi manager, VPS logger
+  provisioning/             Captive portal: AP, web server, button detection
+  security/                 Auth manager, session manager, rate limiter
+  web/                      Production web server, API handlers, HTML pages
+```
