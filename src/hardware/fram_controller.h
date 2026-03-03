@@ -80,20 +80,22 @@ struct PumpCycle {
 // 🆕 TOP-OFF ALGORITHM SECTIONS
 // ===============================
 
-// Konfiguracja algorytmu (TopOffConfig) — 16 bajtów
-#define FRAM_ADDR_TOPOFF_CONFIG     0x0560   // 16 bytes — TopOffConfig struct
-#define FRAM_ADDR_TOPOFF_CFG_CHKSUM 0x0570   // 2 bytes — checksum konfiguracji
+// Konfiguracja algorytmu (TopOffConfig) — 20 bajtów
+// UWAGA: sizeof(TopOffConfig) == 20 (verified by static_assert)
+//        Checksum MUSI być na adresie >= FRAM_ADDR_TOPOFF_CONFIG + 20 = 0x0574
+#define FRAM_ADDR_TOPOFF_CONFIG     0x0560   // 20 bytes — TopOffConfig struct (0x0560–0x0573)
+#define FRAM_ADDR_TOPOFF_CFG_CHKSUM 0x0574   // 2 bytes — checksum konfiguracji (po strukturze!)
 
 // Blok EMA (EmaBlock) — 16 bajtów
-#define FRAM_ADDR_EMA_BLOCK         0x0580   // 16 bytes — EmaBlock struct
+#define FRAM_ADDR_EMA_BLOCK         0x0580   // 16 bytes — EmaBlock struct (0x0580–0x058F)
 #define FRAM_ADDR_EMA_CHKSUM        0x0590   // 2 bytes — checksum EMA
 
-// Ring buffer rekordów dolewek (TopOffRecord, 18 bajtów każdy)
+// Ring buffer rekordów dolewek (TopOffRecord, 20 bajtów każdy)
 #define TOPOFF_HISTORY_SIZE         60       // Maksymalnie 60 rekordów (60×20=1200 bajtów)
 #define FRAM_TOPOFF_RECORD_SIZE     20       // sizeof(TopOffRecord) — weryfikowane static_assert
 #define FRAM_ADDR_TOPOFF_COUNT      0x0600   // 2 bytes — liczba zapisanych rekordów
 #define FRAM_ADDR_TOPOFF_WPTR       0x0602   // 2 bytes — write pointer (ring buffer)
-#define FRAM_ADDR_TOPOFF_DATA       0x0610   // Start danych: 60 × 18 = 1080 bajtów → kończy się 0x0A58
+#define FRAM_ADDR_TOPOFF_DATA       0x0610   // Start danych: 60 × 20 = 1200 bajtów → kończy się 0x0AC0
 
 // Common constants
 // #define FRAM_MAGIC_NUMBER      0x57415452  // "WATR" in hex
