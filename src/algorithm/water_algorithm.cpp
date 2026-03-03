@@ -1,1189 +1,661 @@
-
 #include "water_algorithm.h"
 #include "../core/logging.h"
 #include "../hardware/pump_controller.h"
 #include "../hardware/water_sensors.h"
-#include "../config/config.h" 
 #include "../hardware/hardware_pins.h"
-#include "algorithm_config.h" 
-#include "../hardware/fram_controller.h"  
-#include "../network/vps_logger.h"
-#include "../hardware/rtc_controller.h" 
-
+#include "../hardware/rtc_controller.h"
+#include "../hardware/fram_controller.h"
+#include "../config/config.h"
+#include "algorithm_config.h"
 
 WaterAlgorithm waterAlgorithm;
 
+// ============================================================
+// Konstruktor — minimalny init, FRAM ładowany później
+// ============================================================
 WaterAlgorithm::WaterAlgorithm() {
-    currentState = STATE_IDLE;
-    resetCycle();
-    dayStartTime = millis();
-    
-    dailyVolumeML = 0;
-    lastResetUTCDay = 0;
-    resetPending = false;
+    currentState     = STATE_IDLE;
+    stateStartMs     = 0;
+    pumpStartMs      = 0;
+    maxPumpDurationMs = (uint32_t)calculateMaxPumpTime(DEFAULT_MAX_DOSE_ML,
+                            currentPumpSettings.volumePerSecond) * 1000UL;
 
-    // 🆕 NEW: Initialize Available Volume and Fill Water Max
-    availableVolumeMax = 10000;      // Default 10L
-    availableVolumeCurrent = 10000;
-    fillWaterMaxConfig = FILL_WATER_MAX;  // Default from config
-    
-    lastError = ERROR_NONE;
+    lastReleaseCheckMs  = 0;
+    releaseCounter      = 0;
+    lastCycleTimeout    = false;
+
+    lastTopOffTimestamp = 0;
+    rolling24hVolumeMl  = 0;
+
+    // Config — defaulty z kodu (nadpisane z FRAM przez initFromFRAM())
+    config.max_dose_ml     = DEFAULT_MAX_DOSE_ML;
+    config.ema_alpha       = DEFAULT_EMA_ALPHA;
+    config.vol_yellow_pct  = DEFAULT_VOL_YELLOW_PCT;
+    config.vol_red_pct     = DEFAULT_VOL_RED_PCT;
+    config.rate_yellow_pct = DEFAULT_RATE_YELLOW_PCT;
+    config.rate_red_pct    = DEFAULT_RATE_RED_PCT;
+    config.history_window_s = DEFAULT_HISTORY_WINDOW_S;
+    config.is_configured   = 0x00;
+
+    // EMA — zerowe, bootstrap od zera
+    ema.ema_volume_ml  = 0.0f;
+    ema.ema_interval_s = 0.0f;
+    ema.ema_rate_ml_h  = 0.0f;
+    ema.bootstrap_count = 0;
+
+    lastError         = ERROR_NONE;
     errorSignalActive = false;
-    lastSensor1State = false;
-    lastSensor2State = false;
-    todayCycles.clear();
+    errorPulseCount   = 0;
+    errorPulseState   = false;
+    errorSignalStart  = 0;
 
-    sensor1DebounceCompleteTime = 0;
-    sensor2DebounceCompleteTime = 0;
-    debouncePhaseActive = false;
-
-    // ============== RELEASE VERIFICATION INIT ==============
-    sensor1TriggeredCycle = false;
-    sensor2TriggeredCycle = false;
-    lastReleaseCheck = 0;
-    for (int i = 0; i < 2; i++) {
-        releaseDebounce[i].counter = 0;
-        releaseDebounce[i].confirmed = false;
-        releaseDebounce[i].confirmTime = 0;
-    }
-
-    framDataLoaded = false;
-    framCycles.clear();
-
-    // ============== SYSTEM DISABLE FLAG INIT ==============
     systemWasDisabled = false;
-
-    // NOTE: FRAM data loaded later via initFromFRAM() — called from setup() after initNVS()
+    cycleLogged       = false;
 
     pinMode(ERROR_SIGNAL_PIN, OUTPUT);
     digitalWrite(ERROR_SIGNAL_PIN, LOW);
     pinMode(RESET_PIN, INPUT_PULLUP);
-    
-    LOG_INFO("");
-    LOG_INFO("WaterAlgorithm constructor completed (minimal init)");
+
+    LOG_INFO("WaterAlgorithm: constructor done");
 }
 
-void WaterAlgorithm::resetCycle() {
-    currentCycle = {};
-    currentCycle.timestamp = getUnixTimestamp();
-    triggerStartTime = 0;
-    sensor1TriggerTime = 0;
-    sensor2TriggerTime = 0;
-    pumpStartTime = 0;
-    pumpAttempts = 0;
-    cycleLogged = false;
-    permission_log = true;
-    waterFailDetected = false;
-    sensor1DebounceCompleteTime = 0;
-    sensor2DebounceCompleteTime = 0;
-    debouncePhaseActive = false;
+// ============================================================
+// initFromFRAM — wywołaj z setup() po initFRAM()
+// ============================================================
+void WaterAlgorithm::initFromFRAM() {
+    loadConfigFromFRAM();
+    loadEmaFromFRAM();
 
-    // Release verification reset
-    sensor1TriggeredCycle = false;
-    sensor2TriggeredCycle = false;
-    lastReleaseCheck = 0;
-    resetReleaseDebounce();
+    // Odtwórz last top-off timestamp z najnowszego rekordu FRAM
+    TopOffRecord lastRecord;
+    if (loadLastTopOffRecord(lastRecord)) {
+        lastTopOffTimestamp = lastRecord.timestamp;
+        LOG_INFO("WaterAlgorithm: last top-off timestamp restored: %lu", lastTopOffTimestamp);
+    }
+
+    // Przelicz rolling 24h
+    rolling24hVolumeMl = scanRolling24h();
+
+    // Przelicz timeout pompy z aktualnej kalibracji i config
+    maxPumpDurationMs = (uint32_t)calculateMaxPumpTime(
+        config.max_dose_ml, currentPumpSettings.volumePerSecond) * 1000UL;
+
+    LOG_INFO("====================================");
+    LOG_INFO("WaterAlgorithm: initFromFRAM done");
+    LOG_INFO("  max_dose_ml    : %d ml", config.max_dose_ml);
+    LOG_INFO("  ema_alpha      : %.2f", config.ema_alpha);
+    LOG_INFO("  history_window : %lu s", config.history_window_s);
+    LOG_INFO("  bootstrap_count: %d/%d", ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
+    LOG_INFO("  rolling_24h    : %d ml", rolling24hVolumeMl);
+    LOG_INFO("  max_pump_time  : %lu s", maxPumpDurationMs / 1000UL);
+    LOG_INFO("====================================");
 }
 
-// ============== SYSTEM DISABLE HANDLER ==============
-void WaterAlgorithm::handleSystemDisable() {
-    // Called when isSystemDisabled() returns true
-    
-    // If already in IDLE - nothing to do, just mark as disabled
-    if (currentState == STATE_IDLE) {
-        if (!systemWasDisabled) {
-            LOG_INFO("");
-            LOG_INFO("System disabled while IDLE - safe state");
-            systemWasDisabled = true;
-        }
-        return;
+// ============================================================
+// FRAM — ładowanie i zapis konfiguracji
+// ============================================================
+void WaterAlgorithm::loadConfigFromFRAM() {
+    TopOffConfig framCfg;
+    if (loadTopOffConfigFromFRAM(framCfg) && framCfg.is_configured == TOPOFF_CONFIG_MAGIC) {
+        config = framCfg;
+        LOG_INFO("WaterAlgorithm: config loaded from FRAM");
+    } else {
+        LOG_INFO("WaterAlgorithm: FRAM config absent — using defaults");
     }
-    
-    // If in ERROR state - keep error state, just mark
-    if (currentState == STATE_ERROR) {
-        if (!systemWasDisabled) {
-            LOG_INFO("");
-            LOG_INFO("System disabled while in ERROR state");
-            systemWasDisabled = true;
-        }
-        return;
-    }
-    
-    // If in LOGGING state - let it complete first
-    if (currentState == STATE_LOGGING) {
-        // Don't interrupt logging - let update() handle it normally
-        // It will transition to IDLE after LOGGING_TIME
-        return;
-    }
-    
-    // Active cycle in progress - need to interrupt safely
-    LOG_WARNING("");
-    LOG_WARNING("====================================");
-    LOG_WARNING("SYSTEM DISABLE - INTERRUPTING CYCLE");
-    LOG_WARNING("Current state: %s", getStateString());
-    LOG_WARNING("====================================");
-    
-    // Stop pump if active
-    if (isPumpActive()) {
-        LOG_WARNING("Stopping active pump");
-        LOG_WARNING("");
-
-        stopPump();
-    }
-    
-    // Log partial cycle data to FRAM and VPS
-    if (currentState != STATE_IDLE && !cycleLogged) {
-        LOG_INFO("");
-        LOG_INFO("Logging interrupted cycle data");
-        
-        // Mark as interrupted in cycle data
-        currentCycle.error_code = ERROR_NONE;  // Not an error, just interrupted
-        
-        // Calculate actual volume if pump ran
-        uint16_t actualVolumeML = 0;
-        if (pumpStartTime > 0 && currentCycle.pump_duration > 0) {
-            // Pump was running - estimate delivered volume
-            uint32_t pumpedSeconds = getCurrentTimeSeconds() - pumpStartTime;
-            if (pumpedSeconds > currentCycle.pump_duration) {
-                pumpedSeconds = currentCycle.pump_duration;
-            }
-            actualVolumeML = (uint16_t)(pumpedSeconds * currentPumpSettings.volumePerSecond);
-        }
-        currentCycle.volume_dose = actualVolumeML;
-        
-        // Add to daily volume
-        framBusy = true;
-        if (actualVolumeML > 0) {
-            dailyVolumeML += actualVolumeML;
-            saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-            LOG_INFO("");
-            LOG_INFO("Partial volume added: %dml, daily total: %dml", actualVolumeML, dailyVolumeML);
-        }
-
-        // Save to FRAM
-        saveCycleToStorage(currentCycle);
-        framBusy = false;
-    }
-    
-    // Reset to IDLE
-    currentState = STATE_IDLE;
-    resetCycle();
-    systemWasDisabled = true;
-    
-    LOG_WARNING("");
-    LOG_WARNING("Cycle interrupted - returned to IDLE");
 }
 
+void WaterAlgorithm::loadEmaFromFRAM() {
+    EmaBlock framEma;
+    if (loadEmaBlockFromFRAM(framEma)) {
+        ema = framEma;
+        LOG_INFO("WaterAlgorithm: EMA loaded — bootstrap=%d, vol=%.1f, rate=%.2f",
+                 ema.bootstrap_count, ema.ema_volume_ml, ema.ema_rate_ml_h);
+    } else {
+        LOG_INFO("WaterAlgorithm: EMA absent in FRAM — starting from zero");
+    }
+}
+
+void WaterAlgorithm::saveEmaToFRAM() {
+    framBusy = true;
+    saveEmaBlockToFRAM(ema);
+    framBusy = false;
+}
+
+// ============================================================
+// GŁÓWNA PĘTLA
+// ============================================================
 void WaterAlgorithm::update() {
     checkResetButton();
     updateErrorSignal();
-    
-    // ============== SYSTEM DISABLE CHECK (PRIORITY) ==============
-    // Check at the very beginning - before any other processing
+    checkPumpAutoEnable();
+
+    // ---- Obsługa wyłączenia systemu ----
     if (isSystemDisabled()) {
         handleSystemDisable();
-        return;  // Skip all algorithm processing when disabled
+        return;
     }
-    
-    // ============== SYSTEM RE-ENABLE CHECK ==============
-    // If system was disabled and is now enabled, check sensors
+
+    // ---- Obsługa ponownego włączenia ----
     if (systemWasDisabled) {
-        LOG_INFO("");
-        LOG_INFO("SYSTEM RE-ENABLED - SENSOR CHECK");
-        
-        // Clear the flag first
+        LOG_INFO("SYSTEM RE-ENABLED — sensor state will be picked up by water_sensors");
         systemWasDisabled = false;
-        
-        // Check if sensors are currently active
-        bool sensor1 = readWaterSensor1();
-        bool sensor2 = readWaterSensor2();
-        
-        LOG_INFO("");
-        LOG_INFO("Sensor 1: %s", sensor1 ? "ACTIVE" : "inactive");
-        LOG_INFO("");
-        LOG_INFO("Sensor 2: %s", sensor2 ? "ACTIVE" : "inactive");
-        
-        if (sensor1 || sensor2) {
-            // Sensors active - let debounce process handle it naturally
-            LOG_INFO("");
-            LOG_INFO("Sensors active - debounce process will start");
-            // checkWaterSensors() w main loop wykryje aktywne czujniki i uruchomi debouncing
-        } else {
-            LOG_INFO("");
-            LOG_INFO("Sensors inactive - waiting for trigger");
-        }
+        resetSensorProcess();  // Pozwól sensorowi zacząć od nowa
     }
-    
-    // UTC day check - throttled to 1x/second
-    static uint32_t lastDateCheck = 0;
-    
-    if (millis() - lastDateCheck >= 1000) {
-        // uint32_t currentTime = getCurrentTimeSeconds();
-        lastDateCheck = millis();
-        
-        if (!isRTCWorking()) {
-            static uint32_t lastWarning = 0;
-            if (millis() - lastWarning > 30000) {
-                LOG_ERROR("");
-                LOG_ERROR("RTC not working - skipping date check");
-                lastWarning = millis();
-            }
-            goto skip_date_check;
-        }
-        
-        uint32_t currentUTCDay = getUnixTimestamp() / 86400;
-        
-        // ✅ SANITY CHECK: Sprawdź czy UTC day jest sensowny (2024-2035)
-        // 2024-01-01 = 19723 days, 2035-12-31 = 24106 days
-        if (currentUTCDay < 19723 || currentUTCDay > 24106) {
-            static uint32_t lastInvalidWarning = 0;
-            if (millis() - lastInvalidWarning > 10000) {
-                LOG_ERROR("");
-                LOG_ERROR("===========================================");
-                LOG_ERROR("Invalid UTC day from RTC: %lu (expected 19723-24106)", currentUTCDay);
-                LOG_ERROR("Skipping date check - RTC data corrupted");
-                LOG_ERROR("===========================================");
-                lastInvalidWarning = millis();
-            }
-            goto skip_date_check;
-        }
-        
-        // ✅ DATE REGRESSION PROTECTION: Jeśli nowy < stary, ignoruj (RTC error)
-        if (currentUTCDay < lastResetUTCDay) {
-            static uint32_t lastRegressionWarning = 0;
-            if (millis() - lastRegressionWarning > 10000) {
-                LOG_ERROR("");
-                LOG_ERROR("===========================================");
-                LOG_ERROR("DATE REGRESSION DETECTED - IGNORING!");
-                LOG_ERROR("Current UTC day: %lu, Last: %lu (diff: %ld days BACK)", 
-                         currentUTCDay, lastResetUTCDay, 
-                         (long)(lastResetUTCDay - currentUTCDay));
-                LOG_ERROR("This indicates RTC read error - skipping reset");
-                LOG_ERROR("===========================================");
-                lastRegressionWarning = millis();
-            }
-            goto skip_date_check;
-        }
-        
-        if (currentUTCDay != lastResetUTCDay) {
-            LOG_WARNING("");
-            LOG_WARNING("===========================================");
-            LOG_WARNING("UTC DAY CHANGE DETECTED - RESET TRIGGERED!");
-            LOG_WARNING("Previous UTC day: %lu", lastResetUTCDay);
-            LOG_WARNING("Current UTC day:  %lu", currentUTCDay);
-            LOG_WARNING("Difference: +%lu days", currentUTCDay - lastResetUTCDay);
-            LOG_WARNING("Daily volume BEFORE: %dml", dailyVolumeML);
-            LOG_WARNING("===========================================");
-            
-            if (isPumpActive()) {
-                if (!resetPending) {
-                    LOG_INFO("");
-                    LOG_INFO("Reset delayed - pump active");
-
-                    resetPending = true;
-                }
-            } else {
-                dailyVolumeML = 0;
-                todayCycles.clear();
-                lastResetUTCDay = currentUTCDay;
-                saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-                resetPending = false;
-                
-                LOG_WARNING("");
-                LOG_WARNING("RESET EXECUTED: new UTC day = %lu", lastResetUTCDay);
-            }
-        }
-    }
-       
-    skip_date_check:
-    uint32_t currentTime = getCurrentTimeSeconds();
-    
-    if (resetPending && !isPumpActive() && currentState == STATE_IDLE) {
-        LOG_INFO("");
-        LOG_INFO("Executing delayed reset (pump finished)");
-        
-        uint32_t currentUTCDay = getUnixTimestamp() / 86400;
-        dailyVolumeML = 0;
-        todayCycles.clear();
-        lastResetUTCDay = currentUTCDay;
-        saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-        resetPending = false;
-        
-        LOG_INFO("");
-        LOG_INFO("Delayed reset complete: 0ml (UTC day: %lu)", lastResetUTCDay);
-
-
-    }
-    
-    uint32_t stateElapsed = currentTime - stateStartTime;
 
     switch (currentState) {
+
         case STATE_IDLE:
-            // Oczekiwanie na pierwszy LOW - obsługiwane przez water_sensors.cpp
-            break;
-
-        case STATE_PRE_QUALIFICATION:
-            // Pre-qualification - obsługiwane przez water_sensors.cpp
-            // Callbacki: onPreQualificationSuccess() lub onPreQualificationFail()
-            break;
-
-        case STATE_SETTLING:
-            // Settling (uspokojenie wody) - obsługiwane przez water_sensors.cpp
-            // Callback: onSettlingComplete()
+            // Nic — przejście wyzwalane przez onDebounceComplete()
             break;
 
         case STATE_DEBOUNCING:
-            // Debouncing - obsługiwane przez water_sensors.cpp
-            // Callbacki: onDebounceBothComplete() lub onDebounceTimeout()
+            // Obsługiwane przez water_sensors.cpp — callback onDebounceComplete()
             break;
 
-        // ============== FAZA 2: POMPOWANIE + RELEASE VERIFICATION ==============
-        case STATE_PUMPING_AND_VERIFY: {
-            // Aktualizuj release debounce (co 2s sprawdzaj czujniki)
-            updateReleaseDebounce();
-
-            // Status log co 10s
-            static uint32_t lastStatusLog = 0;
-            if (currentTime - lastStatusLog >= 10) {
-                uint32_t timeSincePumpStart = currentTime - pumpStartTime;
-                LOG_INFO("");                        
-                LOG_INFO("PUMPING_AND_VERIFY: %ds/%ds, pump=%s, S1=%d/%d, S2=%d/%d",
-                        timeSincePumpStart, WATER_TRIGGER_MAX_TIME,
-                        isPumpActive() ? "ON" : "OFF",
-                        releaseDebounce[0].counter, releaseDebounce[0].confirmed ? 1 : 0,
-                        releaseDebounce[1].counter, releaseDebounce[1].confirmed ? 1 : 0);
-                lastStatusLog = currentTime;
-            }
-
-            // Sprawdź warunki zakończenia
-            bool pumpFinished = !isPumpActive();
-            bool allConfirmed = checkAllReleaseConfirmed();
-
-            // SUKCES: Pompa skończyła + wszystkie wymagane potwierdzone
-            if (pumpFinished && allConfirmed) {
-                LOG_INFO("");
-                LOG_INFO("SUCCESS: Pump finished + all sensors confirmed");
-                calculateWaterTrigger();
-                calculateTimeGap2();
-                currentState = STATE_LOGGING;
-                stateStartTime = currentTime;
-                break;
-            }
-
-            // TIMEOUT: 240s od startu pompy
-            uint32_t timeSincePumpStart = currentTime - pumpStartTime;
-            if (timeSincePumpStart >= WATER_TRIGGER_MAX_TIME) {
-                handleReleaseTimeout();
-            }
+        case STATE_PUMPING:
+            updateReleaseVerification();
             break;
-        }
 
         case STATE_LOGGING:
-            if(permission_log){
-                LOG_INFO("");
-                LOG_INFO("==================case STATE_LOGGING");
-                permission_log = false;      
-            } 
-        
-            if (!cycleLogged) {
-                logCycleComplete();
-                cycleLogged = true;
-                
-                if (dailyVolumeML > fillWaterMaxConfig) {
-                    LOG_ERROR("");
-                    LOG_ERROR("Daily limit exceeded! %dml > %dml", dailyVolumeML, fillWaterMaxConfig);
-                    currentCycle.error_code = ERROR_DAILY_LIMIT;
-                    startErrorSignal(ERROR_DAILY_LIMIT);
-                    currentState = STATE_ERROR;
-                    break;
-                }
-            }
-            
-            if (stateElapsed >= LOGGING_TIME) { 
-                LOG_INFO("");
-                LOG_INFO("Cycle complete, returning to IDLE");
-                LOG_INFO("");
-
+            if (millis() - stateStartMs >= (uint32_t)(LOGGING_TIME * 1000)) {
+                LOG_INFO("LOGGING complete — returning to IDLE");
                 currentState = STATE_IDLE;
-                resetCycle();
+                stateStartMs = millis();
+                cycleLogged  = false;
             }
+            break;
+
+        case STATE_ERROR:
+            // Oczekiwanie na reset — obsługiwane przez checkResetButton()
+            break;
+
+        case STATE_MANUAL_OVERRIDE:
+            // Obsługiwane przez pump_controller — callback onManualPumpComplete()
             break;
     }
 }
-   
 
-void WaterAlgorithm::initFromFRAM() {
-    LOG_INFO("");
-    LOG_INFO("Loading cycle history and error stats from FRAM...");
-    loadCyclesFromStorage();
+// ============================================================
+// CALLBACKI Z water_sensors
+// ============================================================
 
-    ErrorStats stats;
-    if (loadErrorStatsFromFRAM(stats)) {
-        LOG_INFO("");
-        LOG_INFO("Error statistics loaded from FRAM");
-    } else {
-        LOG_WARNING("");
-        LOG_WARNING("Could not load error stats from FRAM");
-    }
-}
-
-void WaterAlgorithm::initDailyVolume() {
-    LOG_INFO("INITIALIZING DAILY VOLUME");
-    LOG_INFO("");
-    
-    // Load Available Volume from FRAM (not dependent on RTC)
-    uint32_t loadedMax, loadedCurrent;
-    if (loadAvailableVolumeFromFRAM(loadedMax, loadedCurrent)) {
-        availableVolumeMax = loadedMax;
-        availableVolumeCurrent = loadedCurrent;
-        LOG_INFO("");
-        LOG_INFO("Available volume restored: %lu/%lu ml", availableVolumeCurrent, availableVolumeMax);
-    } else {
-        // First run - save defaults
-        saveAvailableVolumeToFRAM(availableVolumeMax, availableVolumeCurrent);
-        LOG_INFO("");
-        LOG_INFO("Available volume initialized with defaults: %lu ml", availableVolumeMax);
-    }
-
-    // Load Fill Water Max from FRAM (not dependent on RTC)
-    uint16_t loadedFillMax;
-    if (loadFillWaterMaxFromFRAM(loadedFillMax)) {
-        fillWaterMaxConfig = loadedFillMax;
-        LOG_INFO("");
-        LOG_INFO("Fill water max restored: %d ml", fillWaterMaxConfig);
-    } else {
-        // First run - save default
-        saveFillWaterMaxToFRAM(fillWaterMaxConfig);
-        LOG_INFO("");
-        LOG_INFO("Fill water max initialized with default: %d ml", fillWaterMaxConfig);
-    }
-
-    // Daily volume requires RTC to determine if day changed
-    if (!isRTCWorking()) {
-        LOG_ERROR("");
-        LOG_ERROR("RTC not working at initDailyVolume!");
-        // Try to restore last known value from FRAM instead of losing it
-        uint32_t loadedUTCDay = 0;
-        uint16_t loadedVolume = 0;
-        if (loadDailyVolumeFromFRAM(loadedVolume, loadedUTCDay)) {
-            dailyVolumeML = loadedVolume;
-            lastResetUTCDay = loadedUTCDay;
-            LOG_WARNING("Restored daily volume from FRAM: %dml (day=%lu), but cannot verify date",
-                       dailyVolumeML, lastResetUTCDay);
-        } else {
-            dailyVolumeML = 0;
-            lastResetUTCDay = 0;
-        }
-        LOG_ERROR("");
-        LOG_ERROR("Daily volume day-change detection SUSPENDED until RTC ready");
-    } else {
-        uint32_t currentUTCDay = getUnixTimestamp() / 86400;
-        LOG_INFO("Current UTC day: %lu", currentUTCDay);
-        LOG_INFO("");
-
-        // Load from FRAM
-        uint32_t loadedUTCDay = 0;
-        uint16_t loadedVolume = 0;
-
-        if (loadDailyVolumeFromFRAM(loadedVolume, loadedUTCDay)) {
-            LOG_INFO("");
-            LOG_INFO("===========================================");
-            LOG_INFO("FRAM data: %dml, UTC day=%lu", loadedVolume, loadedUTCDay);
-            LOG_INFO("Current UTC day: %lu", currentUTCDay);
-            LOG_INFO("===========================================");
-
-            if (currentUTCDay == loadedUTCDay) {
-                // Same day - restore volume
-                dailyVolumeML = loadedVolume;
-                lastResetUTCDay = loadedUTCDay;
-                LOG_INFO("");
-                LOG_INFO("Same day - restored: %dml", dailyVolumeML);
-            } else {
-                // Different day - reset
-                dailyVolumeML = 0;
-                lastResetUTCDay = currentUTCDay;
-                saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-                LOG_INFO("");
-                LOG_INFO("===========================================");
-                LOG_INFO("Day changed from %lu to %lu", loadedUTCDay, currentUTCDay);
-                LOG_INFO("New day - reset to 0ml");
-                LOG_INFO("===========================================");
-            }
-        } else {
-            // No valid data in FRAM
-            dailyVolumeML = 0;
-            lastResetUTCDay = currentUTCDay;
-            saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-            LOG_INFO("");
-            LOG_INFO("===========================================");
-            LOG_INFO("No valid FRAM data - initializing");
-            LOG_INFO("Initialized to 0ml");
-            LOG_INFO("===========================================");
-        }
-    }
-
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("INIT COMPLETE:");
-    LOG_INFO("  dailyVolumeML: %dml", dailyVolumeML);
-    LOG_INFO("  availableVolume: %lu/%lu ml", availableVolumeCurrent, availableVolumeMax);
-    LOG_INFO("  fillWaterMax: %d ml", fillWaterMaxConfig);
-    LOG_INFO("  lastResetUTCDay: %lu", lastResetUTCDay);
-    LOG_INFO("====================================");
-}
-
-// ============== CALLBACKI FAZY 1 (Pre-qual + Settling + Debouncing) ==============
-
-void WaterAlgorithm::onPreQualificationStart() {
-    LOG_INFO("");
-    LOG_INFO("ALGORITHM: Pre-qualification started");
-
-
-    // Rozpocznij cykl - przejdź do stanu PRE_QUALIFICATION
-    if (currentState == STATE_IDLE) {
-        uint32_t currentTime = getCurrentTimeSeconds();
-        triggerStartTime = currentTime;
-        currentCycle.trigger_time = currentTime;
-        currentCycle.timestamp = getUnixTimestamp();
-        currentState = STATE_PRE_QUALIFICATION;
-        stateStartTime = currentTime;
-
-        // Reset czasów zaliczenia
-        sensor1DebounceCompleteTime = 0;
-        sensor2DebounceCompleteTime = 0;
-        debouncePhaseActive = false;
-
-        LOG_INFO("");
-        LOG_INFO("State changed: IDLE -> PRE_QUALIFICATION");
-    }
-}
-
-void WaterAlgorithm::onPreQualificationSuccess() {
-    // Safety check - only proceed if in expected state
-    if (currentState != STATE_PRE_QUALIFICATION) {
-        LOG_WARNING("");
-        LOG_WARNING("onPreQualificationSuccess ignored - state is %s, not PRE_QUALIFICATION",
-                    getStateString());
-        return;
-    }
-
-
-    uint32_t currentTime = getCurrentTimeSeconds();
-    currentState = STATE_SETTLING;
-    stateStartTime = currentTime;
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("ALGORITHM: Pre-qualification SUCCESS");
-    LOG_INFO("State changed: PRE_QUALIFICATION -> SETTLING (%ds)", SETTLING_TIME);
-    LOG_INFO("====================================");
-}
-
-void WaterAlgorithm::onPreQualificationFail() {
-    // Safety check - only proceed if in expected state
-    if (currentState != STATE_PRE_QUALIFICATION) {
-        LOG_WARNING("");                    
-        LOG_WARNING("onPreQualificationFail ignored - state is %s, not PRE_QUALIFICATION",
-                    getStateString());
-        return;
-    }
-
-    // Cichy powrót do IDLE - bez błędu
-    currentState = STATE_IDLE;
-    resetCycle();
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("ALGORITHM: Pre-qualification FAIL (silent reset)");
-    LOG_INFO("State changed: PRE_QUALIFICATION -> IDLE (no error)");
-    LOG_INFO("====================================");
-}
-
-void WaterAlgorithm::onSettlingComplete() {
-    // Safety check - only proceed if in expected state
-    if (currentState != STATE_SETTLING) {
-        LOG_WARNING("");                    
-        LOG_WARNING("onSettlingComplete ignored - state is %s, not SETTLING",
-                    getStateString());
-        return;
-    }
-
-    LOG_INFO("");
-    LOG_INFO("ALGORITHM: Settling complete");
-
-
-    uint32_t currentTime = getCurrentTimeSeconds();
+void WaterAlgorithm::onDebounceStart() {
+    if (currentState != STATE_IDLE) return;
     currentState = STATE_DEBOUNCING;
-    stateStartTime = currentTime;
-    debouncePhaseActive = true;
-
-    // Reset czasów zaliczenia dla fazy debouncing
-    sensor1DebounceCompleteTime = 0;
-    sensor2DebounceCompleteTime = 0;
-
-    LOG_INFO("");
-    LOG_INFO("State changed: SETTLING -> DEBOUNCING (%ds timeout)", TOTAL_DEBOUNCE_TIME);
+    stateStartMs = millis();
+    LOG_INFO("ALGORITHM: IDLE → DEBOUNCING");
 }
 
-void WaterAlgorithm::onSensorDebounceComplete(uint8_t sensorNum) {
-    uint32_t currentTime = getCurrentTimeSeconds();
-    
-    LOG_INFO("");
-    LOG_INFO("ALGORITHM: Sensor %d debounce complete at %lu", sensorNum, currentTime);
-    
-    if (sensorNum == 1) {
-        sensor1DebounceCompleteTime = currentTime;
-    } else if (sensorNum == 2) {
-        sensor2DebounceCompleteTime = currentTime;
+void WaterAlgorithm::onDebounceComplete() {
+    if (currentState != STATE_DEBOUNCING) return;
+
+    // Sprawdź limit 24h zanim wystartuje pompa
+    rolling24hVolumeMl = scanRolling24h();
+    if (rolling24hVolumeMl >= config.max_dose_ml * 10) {
+        // Heurystyka: jeśli suma dobowa przekracza 10× jednorazowy max → alarm
+        // Właściwy limit dobowy jako parametr konfiguracyjny — do dodania w v2
+        LOG_WARNING("ALGORITHM: 24h limit check — rolling=%d ml", rolling24hVolumeMl);
     }
+
+    resetSensorProcess();
+    startAutoPump();
 }
 
-void WaterAlgorithm::onDebounceBothComplete() {
-    // Safety check - only proceed if in expected state
-    if (currentState != STATE_DEBOUNCING) {
-        LOG_WARNING("");            
-        LOG_WARNING("onDebounceBothComplete ignored - state is %s, not DEBOUNCING",
-                    getStateString());
-        return;
-    }
-
-    LOG_INFO("");
-    LOG_INFO("ALGORITHM: Both sensors debounce OK");
-
-    uint32_t currentTime = getCurrentTimeSeconds();
-    debouncePhaseActive = false;
-
-    // Oblicz time_gap_1 jako różnicę między zaliczeniami
-    if (sensor1DebounceCompleteTime > 0 && sensor2DebounceCompleteTime > 0) {
-        currentCycle.time_gap_1 = abs((int32_t)sensor2DebounceCompleteTime -
-        (int32_t)sensor1DebounceCompleteTime);
-        LOG_INFO("");
-        LOG_INFO("TIME_GAP_1 (debounce diff): %lu seconds", currentCycle.time_gap_1);
-    } else {
-        currentCycle.time_gap_1 = 0;
-    }
-
-    // ============== USTAW KONTEKST DLA FAZY 2 ==============
-    // Oba czujniki zaliczyły - oba wymagane w release verification
-    sensor1TriggeredCycle = true;
-    sensor2TriggeredCycle = true;
-    resetReleaseDebounce();
-
-    LOG_INFO("");
-    LOG_INFO("Release context: S1=required, S2=required");
-
-    // Sukces - nie ustawiamy flagi błędu GAP1
-    // Przechodzimy do uruchomienia pompy + release verification
-    LOG_INFO("Starting pump + release verification");
-    LOG_INFO("");
-
-    currentState = STATE_PUMPING_AND_VERIFY;
-    stateStartTime = currentTime;
-    pumpStartTime = currentTime;
-    pumpAttempts = 1;
-
-    uint16_t pumpWorkTime = calculatePumpWorkTime(currentPumpSettings.volumePerSecond);
-    if (!validatePumpWorkTime(pumpWorkTime)) {
-        LOG_ERROR("");        
-        LOG_ERROR("PUMP_WORK_TIME (%ds) exceeds WATER_TRIGGER_MAX_TIME (%ds)",
-                pumpWorkTime, WATER_TRIGGER_MAX_TIME);
-        pumpWorkTime = WATER_TRIGGER_MAX_TIME - 10;
-    }
-
-    triggerPump(pumpWorkTime, "AUTO_PUMP");
-    currentCycle.pump_duration = pumpWorkTime;
-
-    LOG_INFO("");
-    LOG_INFO("Pump started for %d seconds", pumpWorkTime);
-}
-
-void WaterAlgorithm::onDebounceTimeout(bool sensor1OK, bool sensor2OK) {
-    // Safety check - only proceed if in expected state
-    if (currentState != STATE_DEBOUNCING) {
-        LOG_WARNING("");
-        LOG_WARNING("onDebounceTimeout ignored - state is %s, not DEBOUNCING",
-                    getStateString());
-        return;
-    }
-
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("ALGORITHM: Debounce timeout");
-    LOG_INFO("Sensor1: %s, Sensor2: %s",
-        sensor1OK ? "OK" : "FAIL",
-        sensor2OK ? "OK" : "FAIL");
-    LOG_INFO("====================================");
-
-    uint32_t currentTime = getCurrentTimeSeconds();
-    debouncePhaseActive = false;
-
-    if (sensor1OK || sensor2OK) {
-        // Przynajmniej jeden czujnik OK - uruchamiamy pompę ale z błędem
-        LOG_WARNING("");
-        LOG_WARNING("Only one sensor OK - pump will start with GAP1_FAIL flag");
-
-        // Oblicz time_gap_1
-        if (sensor1DebounceCompleteTime > 0 && sensor2DebounceCompleteTime > 0) {
-            currentCycle.time_gap_1 = abs((int32_t)sensor2DebounceCompleteTime -
-                                          (int32_t)sensor1DebounceCompleteTime);
-        } else {
-            currentCycle.time_gap_1 = TIME_GAP_1_MAX;  // Timeout value
-        }
-
-        // Ustaw flagi bledu
-        currentCycle.sensor_results |= PumpCycle::RESULT_GAP1_FAIL;
-        if (!sensor1OK) {
-            currentCycle.sensor_results |= PumpCycle::RESULT_SENSOR1_DEBOUNCE_FAIL;
-        }
-        if (!sensor2OK) {
-            currentCycle.sensor_results |= PumpCycle::RESULT_SENSOR2_DEBOUNCE_FAIL;
-        }
-
-        // ============== USTAW KONTEKST DLA FAZY 2 ==============
-        // Tylko te czujniki które zaliczyły będą wymagane w release verification
-        sensor1TriggeredCycle = sensor1OK;
-        sensor2TriggeredCycle = sensor2OK;
-        resetReleaseDebounce();
-
-        LOG_INFO("");         
-        LOG_INFO("Release context: S1=%s, S2=%s",
-                 sensor1OK ? "required" : "NOT required",
-                 sensor2OK ? "required" : "NOT required");
-
-        // Uruchom pompę + release verification
-        currentState = STATE_PUMPING_AND_VERIFY;
-        stateStartTime = currentTime;
-        pumpStartTime = currentTime;
-        pumpAttempts = 1;
-
-        uint16_t pumpWorkTime = calculatePumpWorkTime(currentPumpSettings.volumePerSecond);
-        if (!validatePumpWorkTime(pumpWorkTime)) {
-            pumpWorkTime = WATER_TRIGGER_MAX_TIME - 10;
-        }
-
-        triggerPump(pumpWorkTime, "AUTO_PUMP");
-        currentCycle.pump_duration = pumpWorkTime;
-
-        LOG_INFO("");
-        LOG_INFO("Pump started for %d seconds (with GAP1_FAIL)", pumpWorkTime);
-
-    } else {
-        // Żaden czujnik nie zaliczył - ERR_FALSE_TRIGGER
-        
-        // Ustaw flagę błędu FALSE_TRIGGER
-        currentCycle.sensor_results |= PumpCycle::RESULT_FALSE_TRIGGER;
-        
-        // Loguj cykl z błędem
-        currentCycle.time_gap_1 = TOTAL_DEBOUNCE_TIME;
-        currentCycle.error_code = ERROR_NONE;
-        logCycleComplete();
-        
+void WaterAlgorithm::onDebounceReset() {
+    if (currentState == STATE_DEBOUNCING) {
+        LOG_INFO("ALGORITHM: Debounce reset — back to IDLE");
         currentState = STATE_IDLE;
-        resetCycle();
-        
-        LOG_ERROR("");
-        LOG_ERROR("====================================");
-        LOG_ERROR("ERR_FALSE_TRIGGER: No sensor passed debounce");
-        LOG_ERROR("Pre-qualification passed, but debounce failed for both sensors");
-        LOG_ERROR("Possible causes: snail, temporary blockage, sensor noise");
-        LOG_ERROR("Returned to IDLE with FALSE_TRIGGER flag");
-        LOG_ERROR("====================================");
+        stateStartMs = millis();
     }
 }
 
-void WaterAlgorithm::calculateTimeGap2() {
-    // ============== NOWA LOGIKA: używamy czasów z release debounce ==============
-    if (releaseDebounce[0].confirmed && releaseDebounce[1].confirmed) {
-        // Oba potwierdzone - oblicz różnicę
-        currentCycle.time_gap_2 = abs((int32_t)releaseDebounce[0].confirmTime -
-        (int32_t)releaseDebounce[1].confirmTime);
-        
-        LOG_INFO("");        
-        LOG_INFO("TIME_GAP_2: %ds (S1@%lus, S2@%lus)",
-                currentCycle.time_gap_2,
-                releaseDebounce[0].confirmTime,
-                releaseDebounce[1].confirmTime);
-    } else {
-        // Tylko jeden czujnik potwierdzony lub żaden - brak gap2
-        currentCycle.time_gap_2 = 0;
-        LOG_INFO("");
-        LOG_INFO("TIME_GAP_2: 0 (only one sensor confirmed or none)");
-    }
+// ============================================================
+// PUMP CONTROL
+// ============================================================
+
+void WaterAlgorithm::startAutoPump() {
+    // Przelicz timeout z aktualnej kalibracji i config
+    maxPumpDurationMs = (uint32_t)calculateMaxPumpTime(
+        config.max_dose_ml, currentPumpSettings.volumePerSecond) * 1000UL;
+
+    uint16_t maxPumpTimeS = (uint16_t)(maxPumpDurationMs / 1000UL);
+    if (maxPumpTimeS < 1) maxPumpTimeS = 1;
+
+    LOG_INFO("");
+    LOG_INFO("====================================");
+    LOG_INFO("AUTO PUMP START");
+    LOG_INFO("  max_dose_ml  : %d ml", config.max_dose_ml);
+    LOG_INFO("  flow_rate    : %.2f ml/s", currentPumpSettings.volumePerSecond);
+    LOG_INFO("  safety_time  : %d s", maxPumpTimeS);
+    LOG_INFO("====================================");
+
+    pumpStartMs        = millis();
+    lastReleaseCheckMs = pumpStartMs;
+    releaseCounter     = 0;
+    lastCycleTimeout   = false;
+
+    triggerPump(maxPumpTimeS, "AUTO_PUMP");
+
+    currentState = STATE_PUMPING;
+    stateStartMs = millis();
 }
 
-void WaterAlgorithm::calculateWaterTrigger() {
-    // ============== NOWA LOGIKA: używamy czasów z release debounce ==============
-    uint32_t earliestConfirm = UINT32_MAX;
+// ============================================================
+// RELEASE VERIFICATION (STATE_PUMPING)
+// ============================================================
 
-    if (releaseDebounce[0].confirmed && releaseDebounce[0].confirmTime > pumpStartTime) {
-        earliestConfirm = releaseDebounce[0].confirmTime;
-    }
-    if (releaseDebounce[1].confirmed && releaseDebounce[1].confirmTime > pumpStartTime) {
-        if (releaseDebounce[1].confirmTime < earliestConfirm) {
-            earliestConfirm = releaseDebounce[1].confirmTime;
+void WaterAlgorithm::updateReleaseVerification() {
+    uint32_t now = millis();
+
+    // Sprawdź czy pompa sama się zatrzymała (timeout przez pump_controller)
+    if (!isPumpActive()) {
+        if (!lastCycleTimeout) {
+            // Sprawdź czy sensor potwierdził — jeśli pompa stoi ale sensor nie zaliczył release
+            bool sensorLow = readWaterSensor();
+            if (sensorLow) {
+                // Pompa stanęła przez timeout — sensor nadal LOW
+                lastCycleTimeout = true;
+                LOG_WARNING("");
+                LOG_WARNING("PUMP TIMEOUT — sensor did not release!");
+            }
         }
-    }
-
-    if (earliestConfirm != UINT32_MAX) {
-        currentCycle.water_trigger_time = earliestConfirm - pumpStartTime;
-
-        // Sanity check
-        if (currentCycle.water_trigger_time > WATER_TRIGGER_MAX_TIME) {
-            currentCycle.water_trigger_time = WATER_TRIGGER_MAX_TIME;
-        }
-
-        LOG_INFO("WATER_TRIGGER_TIME: %ds (from release debounce)",
-                currentCycle.water_trigger_time);
-    } else {
-        // No valid release detected - timeout
-        currentCycle.water_trigger_time = WATER_TRIGGER_MAX_TIME;
-        LOG_WARNING("");
-        LOG_WARNING("No sensor release confirmed - water_trigger_time = MAX");
-    }
-}
-
-// ============== RELEASE VERIFICATION METHODS ==============
-
-void WaterAlgorithm::resetReleaseDebounce() {
-    for (int i = 0; i < 2; i++) {
-        releaseDebounce[i].counter = 0;
-        releaseDebounce[i].confirmed = false;
-        releaseDebounce[i].confirmTime = 0;
-    }
-    lastReleaseCheck = 0;
-}
-
-void WaterAlgorithm::updateReleaseDebounce() {
-    uint32_t currentTime = getCurrentTimeSeconds();
-
-    // Sprawdzaj co RELEASE_CHECK_INTERVAL (2s)
-    if (currentTime - lastReleaseCheck < RELEASE_CHECK_INTERVAL) {
+        finishPumpCycle();
         return;
     }
-    lastReleaseCheck = currentTime;
 
-    // Odczytaj czujniki (HIGH = woda podniesiona = !readWaterSensorX())
-    bool sensor1High = !readWaterSensor1();
-    bool sensor2High = !readWaterSensor2();
+    // Odstęp między sprawdzeniami
+    if (now - lastReleaseCheckMs < (uint32_t)RELEASE_CHECK_INTERVAL_MS) return;
+    lastReleaseCheckMs = now;
 
-    // Aktualizuj release debounce dla S1 (jeśli wymagany)
-    if (sensor1TriggeredCycle && !releaseDebounce[0].confirmed) {
-        if (sensor1High) {
-            releaseDebounce[0].counter++;
-            if (releaseDebounce[0].counter >= RELEASE_DEBOUNCE_COUNT) {
-                releaseDebounce[0].confirmed = true;
-                releaseDebounce[0].confirmTime = currentTime;
-                LOG_INFO("");
-                LOG_INFO("Sensor1 release CONFIRMED at %lus (3x HIGH)", currentTime);
-            }
-        } else {
-            if (releaseDebounce[0].counter > 0) {
-                LOG_INFO("");
-                LOG_INFO("Sensor1 release reset (was %d)", releaseDebounce[0].counter);
-            }
-            releaseDebounce[0].counter = 0;
+    bool sensorHigh = !readWaterSensor();  // HIGH = woda dolana, sensor nieaktywny
+
+    if (sensorHigh) {
+        releaseCounter++;
+        LOG_INFO("RELEASE: HIGH %d/%d", releaseCounter, RELEASE_DEBOUNCE_COUNT);
+
+        if (releaseCounter >= RELEASE_DEBOUNCE_COUNT) {
+            LOG_INFO("");
+            LOG_INFO("====================================");
+            LOG_INFO("RELEASE: Sensor confirmed — stopping pump");
+            LOG_INFO("====================================");
+            stopPump();
+            lastCycleTimeout = false;
+            finishPumpCycle();
         }
-    }
-
-    // Aktualizuj release debounce dla S2 (jeśli wymagany)
-    if (sensor2TriggeredCycle && !releaseDebounce[1].confirmed) {
-        if (sensor2High) {
-            releaseDebounce[1].counter++;
-            if (releaseDebounce[1].counter >= RELEASE_DEBOUNCE_COUNT) {
-                releaseDebounce[1].confirmed = true;
-                releaseDebounce[1].confirmTime = currentTime;
-                LOG_INFO("");
-                LOG_INFO("Sensor2 release CONFIRMED at %lus (3x HIGH)", currentTime);
-            }
-        } else {
-            if (releaseDebounce[1].counter > 0) {
-                LOG_INFO("");
-                LOG_INFO("Sensor2 release reset (was %d)", releaseDebounce[1].counter);
-            }
-            releaseDebounce[1].counter = 0;
+    } else {
+        if (releaseCounter > 0) {
+            LOG_INFO("RELEASE: LOW again — counter reset (was %d)", releaseCounter);
         }
+        releaseCounter = 0;
     }
 }
 
-bool WaterAlgorithm::checkAllReleaseConfirmed() {
-    // Sprawdź czy wszystkie WYMAGANE czujniki potwierdziły
-    if (sensor1TriggeredCycle && !releaseDebounce[0].confirmed) {
-        return false;
+// ============================================================
+// FINALIZACJA CYKLU — po zatrzymaniu pompy
+// ============================================================
+
+void WaterAlgorithm::finishPumpCycle() {
+    uint32_t durationMs = millis() - pumpStartMs;
+    uint32_t durationS  = durationMs / 1000UL;
+    uint16_t volumeMl   = (uint16_t)(durationS * currentPumpSettings.volumePerSecond);
+
+    LOG_INFO("");
+    LOG_INFO("====================================");
+    LOG_INFO("CYCLE COMPLETE");
+    LOG_INFO("  duration  : %lu s", durationS);
+    LOG_INFO("  volume    : %d ml", volumeMl);
+    LOG_INFO("  timeout   : %s", lastCycleTimeout ? "YES" : "no");
+    LOG_INFO("====================================");
+
+    // Timestamp i interwał
+    uint32_t nowTs     = getUnixTimestamp();
+    uint32_t intervalS = (lastTopOffTimestamp > 0 && nowTs > lastTopOffTimestamp)
+                         ? (nowTs - lastTopOffTimestamp) : 0;
+    lastTopOffTimestamp = nowTs;
+
+    // Rate [ml/h]
+    float rateMlH = (intervalS > 0)
+                    ? ((float)volumeMl / intervalS * 3600.0f)
+                    : 0.0f;
+
+    // Aktualizuj EMA
+    updateEMA(volumeMl, intervalS, rateMlH);
+
+    // Oblicz odchylenia
+    int8_t devVolPct  = calculateDevPct((float)volumeMl, ema.ema_volume_ml);
+    int8_t devRatePct = calculateDevPct(rateMlH, ema.ema_rate_ml_h);
+
+    // Poziom alertu
+    uint8_t alertLevel = lastCycleTimeout ? 2 : calculateAlertLevel(devVolPct, devRatePct);
+
+    // Flagi
+    uint8_t flags = 0;
+    if (lastCycleTimeout)                          flags |= TopOffRecord::FLAG_TIMEOUT;
+    if (ema.bootstrap_count < DEFAULT_MIN_BOOTSTRAP) flags |= TopOffRecord::FLAG_BOOTSTRAP;
+
+    // Buduj rekord
+    TopOffRecord record;
+    record.timestamp      = nowTs;
+    record.volume_ml      = volumeMl;
+    record.interval_s     = intervalS;
+    record.rate_ml_h      = rateMlH;
+    record.dev_volume_pct = devVolPct;
+    record.dev_rate_pct   = devRatePct;
+    record.alert_level    = alertLevel;
+    record.flags          = flags;
+
+    // Zapis do FRAM
+    framBusy = true;
+    saveTopOffRecord(record);
+    saveEmaToFRAM();
+    framBusy = false;
+
+    // Odśwież cache rolling 24h
+    rolling24hVolumeMl = scanRolling24h();
+
+    // Error signal dla timeout
+    if (lastCycleTimeout) {
+        startErrorSignal(ERROR_TIMEOUT);
     }
-    if (sensor2TriggeredCycle && !releaseDebounce[1].confirmed) {
-        return false;
-    }
-    return true;
+
+    LOG_INFO("METRICS: dev_vol=%d%% dev_rate=%d%% alert=%d bootstrap=%d/%d",
+             devVolPct, devRatePct, alertLevel,
+             ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
+
+    // Przejdź do LOGGING
+    currentState = STATE_LOGGING;
+    stateStartMs = millis();
+    cycleLogged  = true;
 }
 
-void WaterAlgorithm::handleReleaseTimeout() {
-    LOG_WARNING("");
-    LOG_WARNING("RELEASE VERIFICATION TIMEOUT (240s)");
+// ============================================================
+// EMA — obliczenia
+// ============================================================
 
-    // Zatrzymaj pompę jeśli jeszcze pracuje
+void WaterAlgorithm::updateEMA(uint16_t volumeMl, uint32_t intervalS, float rateMlH) {
+    float alpha = config.ema_alpha;
+
+    if (ema.bootstrap_count == 0) {
+        // Pierwsze zdarzenie — inicjuj EMA bezpośrednio
+        ema.ema_volume_ml  = (float)volumeMl;
+        ema.ema_interval_s = (float)intervalS;
+        ema.ema_rate_ml_h  = rateMlH;
+    } else {
+        ema.ema_volume_ml  = alpha * volumeMl  + (1.0f - alpha) * ema.ema_volume_ml;
+        ema.ema_interval_s = alpha * intervalS + (1.0f - alpha) * ema.ema_interval_s;
+        ema.ema_rate_ml_h  = alpha * rateMlH   + (1.0f - alpha) * ema.ema_rate_ml_h;
+    }
+
+    if (ema.bootstrap_count < 255) ema.bootstrap_count++;
+
+    LOG_INFO("EMA: vol=%.1f int=%.0fs rate=%.2f ml/h (bootstrap=%d)",
+             ema.ema_volume_ml, ema.ema_interval_s, ema.ema_rate_ml_h,
+             ema.bootstrap_count);
+}
+
+int8_t WaterAlgorithm::calculateDevPct(float current, float ema_val) const {
+    if (ema_val < 0.001f || ema.bootstrap_count < DEFAULT_MIN_BOOTSTRAP) return 0;
+    float dev = (current - ema_val) / ema_val * 100.0f;
+    return clampDevPct(dev);
+}
+
+uint8_t WaterAlgorithm::calculateAlertLevel(int8_t devVolPct, int8_t devRatePct) const {
+    if (ema.bootstrap_count < DEFAULT_MIN_BOOTSTRAP) return 0;  // Bootstrap — brak alertów
+
+    uint8_t alertVol  = 0;
+    uint8_t alertRate = 0;
+
+    int absVol  = devVolPct  < 0 ? -devVolPct  : devVolPct;
+    int absRate = devRatePct < 0 ? -devRatePct : devRatePct;
+
+    if (absVol >= config.vol_red_pct)      alertVol  = 2;
+    else if (absVol >= config.vol_yellow_pct) alertVol = 1;
+
+    if (absRate >= config.rate_red_pct)       alertRate = 2;
+    else if (absRate >= config.rate_yellow_pct) alertRate = 1;
+
+    return (alertVol > alertRate) ? alertVol : alertRate;
+}
+
+// ============================================================
+// Rolling 24h — skanuje ring buffer FRAM
+// ============================================================
+
+uint16_t WaterAlgorithm::scanRolling24h() const {
+    uint32_t nowTs    = getUnixTimestamp();
+    uint32_t windowS  = config.history_window_s;
+    uint32_t cutoffTs = (nowTs > windowS) ? (nowTs - windowS) : 0;
+
+    uint16_t total = 0;
+    TopOffRecord records[TOPOFF_HISTORY_SIZE];
+    uint16_t count = loadTopOffHistory(records, TOPOFF_HISTORY_SIZE);
+
+    for (uint16_t i = 0; i < count; i++) {
+        if (records[i].timestamp >= cutoffTs) {
+            total += records[i].volume_ml;
+        }
+    }
+    return total;
+}
+
+// ============================================================
+// Konfiguracja
+// ============================================================
+
+void WaterAlgorithm::setConfig(const TopOffConfig& cfg) {
+    config = cfg;
+    config.is_configured = TOPOFF_CONFIG_MAGIC;
+
+    // Przelicz timeout pompy
+    maxPumpDurationMs = (uint32_t)calculateMaxPumpTime(
+        config.max_dose_ml, currentPumpSettings.volumePerSecond) * 1000UL;
+
+    framBusy = true;
+    saveTopOffConfigToFRAM(config);
+    framBusy = false;
+
+    LOG_INFO("Config updated: max_dose=%d ml, alpha=%.2f, pump_time=%lu s",
+             config.max_dose_ml, config.ema_alpha, maxPumpDurationMs / 1000UL);
+}
+
+// ============================================================
+// SYSTEM DISABLE
+// ============================================================
+
+void WaterAlgorithm::handleSystemDisable() {
+    if (currentState == STATE_IDLE) {
+        if (!systemWasDisabled) {
+            LOG_INFO("System disabled while IDLE");
+            systemWasDisabled = true;
+        }
+        return;
+    }
+
+    if (currentState == STATE_ERROR || currentState == STATE_LOGGING) {
+        if (!systemWasDisabled) {
+            systemWasDisabled = true;
+        }
+        return;
+    }
+
+    LOG_WARNING("SYSTEM DISABLE — interrupting cycle (state: %s)", getStateString());
+
     if (isPumpActive()) {
         stopPump();
-        LOG_WARNING("");
-        LOG_WARNING("Pump stopped due to timeout");
+        LOG_WARNING("Pump stopped by system disable");
     }
 
-    bool s1Required = sensor1TriggeredCycle;
-    bool s2Required = sensor2TriggeredCycle;
-    bool s1OK = releaseDebounce[0].confirmed;
-    bool s2OK = releaseDebounce[1].confirmed;
+    resetSensorProcess();
+    currentState      = STATE_IDLE;
+    stateStartMs      = millis();
+    systemWasDisabled = true;
+}
 
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("S1: required=%d, confirmed=%d, counter=%d", s1Required, s1OK, releaseDebounce[0].counter);
-    LOG_INFO("S2: required=%d, confirmed=%d, counter=%d", s2Required, s2OK, releaseDebounce[1].counter);
-    LOG_INFO("====================================");
+// ============================================================
+// ERROR SIGNAL (GPIO ERROR_SIGNAL_PIN)
+// ============================================================
 
-    // Przypadek 1: Przynajmniej jeden wymagany potwierdził
-    if ((s1Required && s1OK) || (s2Required && s2OK)) {
-        // Sukces częściowy - loguj błąd dla niepotwierdzonego
-        if (s1Required && !s1OK) {
-            currentCycle.sensor_results |= PumpCycle::RESULT_SENSOR1_RELEASE_FAIL;
-            LOG_ERROR("");
-            LOG_ERROR("ERR_SENSOR1_RELEASE: S1 did not confirm");
-        }
-        if (s2Required && !s2OK) {
-            currentCycle.sensor_results |= PumpCycle::RESULT_SENSOR2_RELEASE_FAIL;
-            LOG_ERROR("");
-            LOG_ERROR("ERR_SENSOR2_RELEASE: S2 did not confirm");
-        }
+void WaterAlgorithm::startErrorSignal(ErrorCode error) {
+    lastError         = error;
+    errorSignalActive = true;
+    errorSignalStart  = millis();
+    errorPulseCount   = 0;
+    errorPulseState   = false;
+    digitalWrite(ERROR_SIGNAL_PIN, LOW);
 
-        calculateWaterTrigger();
-        calculateTimeGap2();
-        currentState = STATE_LOGGING;
-        stateStartTime = getCurrentTimeSeconds();
-        return;
-    }
+    LOG_WARNING("Error signal started: code=%d", (int)error);
 
-    // Przypadek 2: Żaden wymagany nie potwierdził = ERR_NO_WATER
-    currentCycle.sensor_results |= PumpCycle::RESULT_WATER_FAIL;
-    waterFailDetected = true;
-    LOG_ERROR("");
-    LOG_ERROR("ERR_NO_WATER: No sensor confirmed water delivery");
-
-    if (pumpAttempts < PUMP_MAX_ATTEMPTS) {
-        // Retry
-        pumpAttempts++;
-        LOG_WARNING("");
-        LOG_WARNING("Retrying pump, attempt %d/%d", pumpAttempts, PUMP_MAX_ATTEMPTS);
-
-        // Reset release debounce dla nowej próby
-        resetReleaseDebounce();
-
-        // Uruchom pompę ponownie
-        uint32_t currentTime = getCurrentTimeSeconds();
-        pumpStartTime = currentTime;
-
-        uint16_t pumpWorkTime = calculatePumpWorkTime(currentPumpSettings.volumePerSecond);
-        if (!validatePumpWorkTime(pumpWorkTime)) {
-            pumpWorkTime = WATER_TRIGGER_MAX_TIME - 10;
-        }
-
-        triggerPump(pumpWorkTime, "AUTO_PUMP_RETRY");
-        currentCycle.pump_duration = pumpWorkTime;
-
-        // Pozostajemy w STATE_PUMPING_AND_VERIFY
-        stateStartTime = currentTime;
-    } else {
-        // Wszystkie próby wyczerpane
-        LOG_ERROR("");
-        LOG_ERROR("All %d pump attempts failed!", PUMP_MAX_ATTEMPTS);
-        currentCycle.error_code = ERROR_PUMP_FAILURE;
-
-        LOG_INFO("");
-        LOG_INFO("Logging failed cycle before entering ERROR state");
-        logCycleComplete();
-
-        startErrorSignal(ERROR_PUMP_FAILURE);
+    if (error != ERROR_TIMEOUT) {
         currentState = STATE_ERROR;
+        stateStartMs = millis();
     }
 }
 
-void WaterAlgorithm::logCycleComplete() {
-    // SPRAWDZENIE: czy currentCycle zostało gdzieś wyzerowane
-    if (currentCycle.time_gap_1 == 0 && sensor1TriggerTime == 0 && sensor2TriggerTime == 0) {
-        LOG_ERROR("");
-        LOG_ERROR("CRITICAL: currentCycle.time_gap_1 was RESET! Reconstructing...");
-        
-        if (triggerStartTime > 0) {
-            LOG_INFO("");
-            LOG_INFO("Attempting to reconstruct TIME_GAP_1 from available data");
-        }
-    }
+void WaterAlgorithm::updateErrorSignal() {
+    if (!errorSignalActive) return;
 
-    // Calculate volume based on actual pump duration
-    // uint16_t actualVolumeML = (uint16_t)(currentCycle.pump_duration * currentPumpSettings.volumePerSecond);
-    // currentCycle.volume_dose = actualVolumeML;
+    uint32_t now     = millis();
+    uint32_t elapsed = now - errorSignalStart;
+    uint8_t  pulses  = (uint8_t)lastError;
+    if (pulses == 0) pulses = 1;
 
-        uint16_t actualVolumeML;
-    
-    if (currentCycle.error_code == ERROR_PUMP_FAILURE) {
-        // All pump attempts failed - NO water delivered
-        actualVolumeML = 0;
-        
-        LOG_ERROR("");
-        LOG_ERROR("====================================");
-        LOG_ERROR("PUMP FAILURE - NO WATER DELIVERED");
-        LOG_ERROR("Total attempts: %d", pumpAttempts);
-        LOG_ERROR("All attempts timed out (no sensor confirmation)");
-        LOG_ERROR("Volume counted: 0ml (no confirmed delivery)");
-        LOG_ERROR("Possible causes:");
-        LOG_ERROR("  - Pump malfunction");
-        LOG_ERROR("  - Tube blockage");
-        LOG_ERROR("  - Water source empty");
-        LOG_ERROR("  - Sensor malfunction");
-        LOG_ERROR("====================================");
-        
+    uint32_t cycleDuration = pulses * (ERROR_PULSE_HIGH + ERROR_PULSE_LOW) + ERROR_PAUSE;
+    uint32_t pos           = elapsed % cycleDuration;
+    uint32_t pulseEnd      = (uint32_t)pulses * (ERROR_PULSE_HIGH + ERROR_PULSE_LOW);
+
+    bool newState;
+    if (pos >= pulseEnd) {
+        newState = false;  // PAUSE
     } else {
-        // Manual cycle - water confirmed by sensors
-        actualVolumeML = (uint16_t)(currentCycle.pump_duration * 
-                                     currentPumpSettings.volumePerSecond);
-                                     
-        LOG_INFO("");
-        LOG_INFO("====================================");
-        LOG_INFO("Water delivery confirmed by sensors");
-        LOG_INFO("Volume delivered: %dml", actualVolumeML);
-        LOG_INFO("====================================");
+        uint32_t inCycle = pos % (ERROR_PULSE_HIGH + ERROR_PULSE_LOW);
+        newState = (inCycle < ERROR_PULSE_HIGH);
     }
 
-
-    currentCycle.volume_dose = actualVolumeML;
-    currentCycle.pump_attempts = pumpAttempts;
-
-    // SET final fail flag based on any failure
-    if (waterFailDetected) {
-        currentCycle.sensor_results |= PumpCycle::RESULT_WATER_FAIL;
-        LOG_INFO("");
-        LOG_INFO("Final WATER fail flag set due to timeout in any attempt");
+    if (newState != errorPulseState) {
+        errorPulseState = newState;
+        digitalWrite(ERROR_SIGNAL_PIN, newState ? HIGH : LOW);
     }
-    
-    // Add to daily volume (use actual volume, not fixed SINGLE_DOSE_VOLUME)
-    dailyVolumeML += actualVolumeML;
-
-    // --- FRAM write section (block HTTP reads during writes) ---
-    framBusy = true;
-
-    if (!saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay)) {
-        LOG_WARNING("");
-        LOG_WARNING("Failed to save daily volume to FRAM");
-    }
-
-    if (availableVolumeCurrent >= actualVolumeML) {
-        availableVolumeCurrent -= actualVolumeML;
-    } else {
-        availableVolumeCurrent = 0;
-    }
-
-    if (!saveAvailableVolumeToFRAM(availableVolumeMax, availableVolumeCurrent)) {
-        LOG_WARNING("");
-        LOG_WARNING("Failed to save available volume to FRAM");
-    }
-
-    // Store in today's cycles (RAM)
-    todayCycles.push_back(currentCycle);
-
-    // Keep only last 50 cycles in RAM
-    if (todayCycles.size() > 50) {
-        todayCycles.erase(todayCycles.begin());
-    }
-
-    // Save cycle to FRAM (for debugging and history)
-    saveCycleToStorage(currentCycle);
-
-    // *** Update error statistics in FRAM ***
-    uint8_t gap1_increment = (currentCycle.sensor_results & PumpCycle::RESULT_GAP1_FAIL) ? 1 : 0;
-    uint8_t gap2_increment = (currentCycle.sensor_results & PumpCycle::RESULT_GAP2_FAIL) ? 1 : 0;
-    uint8_t water_increment = (currentCycle.sensor_results & PumpCycle::RESULT_WATER_FAIL) ? 1 : 0;
-
-    if (gap1_increment || gap2_increment || water_increment) {
-        if (incrementErrorStats(gap1_increment, gap2_increment, water_increment)) {
-            LOG_INFO("");        
-            LOG_INFO("Error stats updated: GAP1+%d, GAP2+%d, WATER+%d",
-                    gap1_increment, gap2_increment, water_increment);
-        } else {
-            LOG_WARNING("");
-            LOG_WARNING("Failed to update error stats in FRAM");
-        }
-    }
-
-    framBusy = false;
-    
-    uint32_t unixTime = getUnixTimestamp();
-    
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("=== CYCLE COMPLETE ===");
-    LOG_INFO("Actual volume: %dml (pump_duration: %ds)", actualVolumeML, currentCycle.pump_duration);
-    LOG_INFO("TIME_GAP_1: %ds (fail=%d)", currentCycle.time_gap_1, gap1_increment);
-    LOG_INFO("TIME_GAP_2: %ds (fail=%d)", currentCycle.time_gap_2, gap2_increment);
-    LOG_INFO("WATER_TRIGGER_TIME: %ds (fail=%d)", currentCycle.water_trigger_time, water_increment);
-    LOG_INFO("Daily: %dml/%dml | Available: %lu/%lu ml", 
-             dailyVolumeML, fillWaterMaxConfig, availableVolumeCurrent, availableVolumeMax);
-    LOG_INFO("====================================");
 }
 
-bool WaterAlgorithm::requestManualPump(uint16_t duration_ms) {
+// ============================================================
+// RESET BUTTON
+// ============================================================
 
-    // ============== BLOCK MANUAL PUMP WHEN SYSTEM DISABLED ==============
-    if (isSystemDisabled()) {
-        LOG_WARNING("");
-        LOG_WARNING("❌ Manual pump blocked: System is disabled");
-        return false;
-    }
+void WaterAlgorithm::checkResetButton() {
+    static uint32_t pressStart = 0;
+    static bool     wasPressed = false;
 
-    if (dailyVolumeML >= fillWaterMaxConfig) {
-        LOG_ERROR("");          
-        LOG_ERROR("❌ Manual pump blocked: Daily limit reached (%dml / %dml)", 
-                  dailyVolumeML, fillWaterMaxConfig);
-        return false;  // Block manual pump when limit reached
-    }
+    bool pressed = (digitalRead(RESET_PIN) == LOW);
 
-    if (currentState == STATE_ERROR) {
-        LOG_WARNING("");
-        LOG_WARNING("Cannot start manual pump in error state");
-        return false;
+    if (pressed && !wasPressed) {
+        pressStart = millis();
+        wasPressed = true;
+    } else if (!pressed && wasPressed) {
+        wasPressed = false;
+        if (currentState == STATE_ERROR) {
+            LOG_INFO("Reset button — clearing error state");
+            resetFromError();
+        }
     }
-    
-    // SPRAWDŹ czy to AUTO_PUMP podczas automatycznego cyklu
+}
+
+// ============================================================
+// MANUAL PUMP
+// ============================================================
+
+bool WaterAlgorithm::requestManualPump(uint16_t durationMs) {
     if (currentState != STATE_IDLE) {
-        // Jeśli jesteśmy w fazie pompowania, nie resetuj danych!
-        if (currentState == STATE_PUMPING_AND_VERIFY) {
-            LOG_INFO("");
-            LOG_INFO("AUTO_PUMP during automatic cycle - preserving cycle data");
-            return true;
-        } else {
-            LOG_INFO("");
-            LOG_INFO("Manual pump interrupting current cycle");
-            currentState = STATE_MANUAL_OVERRIDE;
-            resetCycle();
-        }
+        LOG_WARNING("Manual pump rejected — not in IDLE (state: %s)", getStateString());
+        return false;
     }
-    
+    currentState = STATE_MANUAL_OVERRIDE;
+    stateStartMs = millis();
+    LOG_INFO("Manual pump started (%d ms)", durationMs);
     return true;
 }
 
 void WaterAlgorithm::onManualPumpComplete() {
     if (currentState == STATE_MANUAL_OVERRIDE) {
-        LOG_INFO("");
-        LOG_INFO("Manual pump complete, returning to IDLE");
+        LOG_INFO("Manual pump complete — returning to IDLE");
         currentState = STATE_IDLE;
-        resetCycle();
+        stateStartMs = millis();
+        resetSensorProcess();
     }
 }
 
+void WaterAlgorithm::addManualVolume(uint16_t volumeMl) {
+    rolling24hVolumeMl += volumeMl;
+    LOG_INFO("Manual volume added: %d ml (rolling 24h: %d ml)", volumeMl, rolling24hVolumeMl);
+}
+
+// ============================================================
+// RESET / RECOVERY
+// ============================================================
+
+void WaterAlgorithm::resetFromError() {
+    if (currentState != STATE_ERROR) return;
+
+    errorSignalActive = false;
+    lastError         = ERROR_NONE;
+    digitalWrite(ERROR_SIGNAL_PIN, LOW);
+
+    currentState = STATE_IDLE;
+    stateStartMs = millis();
+    resetSensorProcess();
+    LOG_INFO("Error cleared — returned to IDLE");
+}
+
+bool WaterAlgorithm::resetSystem() {
+    if (currentState == STATE_LOGGING) return false;
+
+    if (isPumpActive()) stopPump();
+
+    errorSignalActive = false;
+    lastError         = ERROR_NONE;
+    digitalWrite(ERROR_SIGNAL_PIN, LOW);
+
+    currentState = STATE_IDLE;
+    stateStartMs = millis();
+    resetSensorProcess();
+    LOG_INFO("System reset to IDLE");
+    return true;
+}
+
+// ============================================================
+// STATUS GETTERS
+// ============================================================
+
 const char* WaterAlgorithm::getStateString() const {
     switch (currentState) {
-        case STATE_IDLE: return "IDLE";
-        case STATE_PRE_QUALIFICATION: return "PRE_QUAL";
-        case STATE_SETTLING: return "SETTLING";
-        case STATE_DEBOUNCING: return "DEBOUNCING";
-        case STATE_PUMPING_AND_VERIFY: return "PUMP+VERIFY";
-        case STATE_LOGGING: return "LOGGING";
-        case STATE_ERROR: return "ERROR";
-        case STATE_MANUAL_OVERRIDE: return "MANUAL_OVERRIDE";
-        default: return "UNKNOWN";
+        case STATE_IDLE:            return "IDLE";
+        case STATE_DEBOUNCING:      return "DEBOUNCING";
+        case STATE_PUMPING:         return "PUMPING";
+        case STATE_LOGGING:         return "LOGGING";
+        case STATE_ERROR:           return "ERROR";
+        case STATE_MANUAL_OVERRIDE: return "MANUAL";
+        default:                    return "UNKNOWN";
+    }
+}
+
+String WaterAlgorithm::getStateDescription() const {
+    switch (currentState) {
+        case STATE_IDLE:
+            return "Waiting for sensor";
+        case STATE_DEBOUNCING:
+            return String("Debouncing sensor (") +
+                   getDebounceCounter() + "/" + DEBOUNCE_COUNTER + ")";
+        case STATE_PUMPING: {
+            uint32_t elapsed = (millis() - pumpStartMs) / 1000UL;
+            return String("Pumping (") + elapsed + "s elapsed)";
+        }
+        case STATE_LOGGING:
+            return "Logging cycle data";
+        case STATE_ERROR:
+            return String("Error: code ") + (int)lastError;
+        case STATE_MANUAL_OVERRIDE:
+            return "Manual pump active";
+        default:
+            return "Unknown";
     }
 }
 
@@ -1191,510 +663,25 @@ bool WaterAlgorithm::isInCycle() const {
     return currentState != STATE_IDLE && currentState != STATE_ERROR;
 }
 
-std::vector<PumpCycle> WaterAlgorithm::getRecentCycles(size_t count) {
-    size_t start = todayCycles.size() > count ? todayCycles.size() - count : 0;
-    return std::vector<PumpCycle>(todayCycles.begin() + start, todayCycles.end());
-}
-
-void WaterAlgorithm::startErrorSignal(ErrorCode error) {
-    lastError = error;
-    errorSignalActive = true;
-    errorSignalStart = millis();
-    errorPulseCount = 0;
-    errorPulseState = false;
-    pinMode(ERROR_SIGNAL_PIN, OUTPUT);
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
-    
-    LOG_ERROR("");
-    LOG_ERROR("Starting error signal: %s", 
-             error == ERROR_DAILY_LIMIT ? "ERR1" :
-             error == ERROR_PUMP_FAILURE ? "ERR2" : "ERR0");
-}
-
-void WaterAlgorithm::updateErrorSignal() {
-    if (!errorSignalActive) return;
-    
-    uint32_t elapsed = millis() - errorSignalStart;
-    uint8_t pulsesNeeded = (lastError == ERROR_DAILY_LIMIT) ? 1 :
-                           (lastError == ERROR_PUMP_FAILURE) ? 2 : 3;
-    
-    // Calculate current position in signal pattern
-    uint32_t cycleTime = 0;
-    for (uint8_t i = 0; i < pulsesNeeded; i++) {
-        cycleTime += ERROR_PULSE_HIGH + ERROR_PULSE_LOW;
-    }
-    cycleTime += ERROR_PAUSE - ERROR_PULSE_LOW; // Remove last LOW, add PAUSE
-    
-    uint32_t posInCycle = elapsed % cycleTime;
-    
-    // Determine if we should be HIGH or LOW
-    bool shouldBeHigh = false;
-    uint32_t currentPos = 0;
-    
-    for (uint8_t i = 0; i < pulsesNeeded; i++) {
-        if (posInCycle >= currentPos && posInCycle < currentPos + ERROR_PULSE_HIGH) {
-            shouldBeHigh = true;
-            break;
-        }
-        currentPos += ERROR_PULSE_HIGH + ERROR_PULSE_LOW;
-    }
-    
-    // Update pin state
-    if (shouldBeHigh != errorPulseState) {
-        errorPulseState = shouldBeHigh;
-        pinMode(ERROR_SIGNAL_PIN, OUTPUT);
-        digitalWrite(ERROR_SIGNAL_PIN, errorPulseState ? HIGH : LOW);
-    }
-}
-
-void WaterAlgorithm::resetFromError() {
-    lastError = ERROR_NONE;
-    errorSignalActive = false;
-    pinMode(ERROR_SIGNAL_PIN, OUTPUT);
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
-    currentState = STATE_IDLE;
-    resetCycle();
-    LOG_INFO("");
-    LOG_INFO("System reset from error state");
-}
-
-bool WaterAlgorithm::resetSystem() {
-    LOG_INFO("");
-    LOG_INFO("resetSystem() called — current state: %s", getStateString());
-
-    if (currentState == STATE_IDLE) {
-        LOG_INFO("System already in IDLE — no action needed");
-        return true;
-    }
-
-    if (currentState == STATE_LOGGING) {
-        LOG_WARNING("Reset blocked — logging in progress, please wait");
-        return false;
-    }
-
-    if (currentState == STATE_ERROR) {
-        resetFromError();
-        LOG_INFO("System reset from ERROR to IDLE");
-        return true;
-    }
-
-    // Active cycle (PRE_QUALIFICATION, SETTLING, DEBOUNCING, PUMPING_AND_VERIFY, MANUAL_OVERRIDE)
-    LOG_WARNING("resetSystem() — interrupting active cycle in state: %s", getStateString());
-
-    // Stop pump if running
-    if (isPumpActive()) {
-        LOG_WARNING("Stopping active pump");
-        stopPump();
-    }
-
-    // Calculate and save partial volume if pump ran during this cycle
-    if (pumpStartTime > 0 && currentCycle.pump_duration > 0) {
-        uint32_t pumpedSeconds = getCurrentTimeSeconds() - pumpStartTime;
-        if (pumpedSeconds > currentCycle.pump_duration) {
-            pumpedSeconds = currentCycle.pump_duration;
-        }
-        uint16_t actualVolumeML = (uint16_t)(pumpedSeconds * currentPumpSettings.volumePerSecond);
-        currentCycle.volume_dose = actualVolumeML;
-
-        framBusy = true;
-        if (actualVolumeML > 0) {
-            dailyVolumeML += actualVolumeML;
-            saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay);
-            LOG_INFO("Partial volume saved: %dml, daily total: %dml", actualVolumeML, dailyVolumeML);
-        }
-        saveCycleToStorage(currentCycle);
-        framBusy = false;
-    }
-
-    currentState = STATE_IDLE;
-    resetCycle();
-    LOG_INFO("System reset to IDLE");
-    return true;
-}
-
-void WaterAlgorithm::loadCyclesFromStorage() {
-    LOG_INFO("");
-    LOG_INFO("Loading cycles from FRAM...");
-
-    framBusy = true;
-
-    if (loadCyclesFromFRAM(framCycles, FRAM_MAX_CYCLES)) {
-        framDataLoaded = true;
-        LOG_INFO("");
-        LOG_INFO("====================================");
-        LOG_INFO("Loaded %d cycles from FRAM", framCycles.size());
-        LOG_INFO("Daily volume already loaded from FRAM: %dml", dailyVolumeML);
-        LOG_INFO("====================================");
-
-        // Load today's cycles for display
-        uint32_t todayStart = (millis() / 1000) - (millis() / 1000) % 86400;
-
-        for (const auto& cycle : framCycles) {
-            if (cycle.timestamp >= todayStart) {
-                todayCycles.push_back(cycle);
-            }
-        }
-
-        LOG_INFO("");
-        LOG_INFO("Loaded %d cycles from today", todayCycles.size());
-
-    } else {
-        LOG_WARNING("");
-        LOG_WARNING("Failed to load cycles from FRAM, starting fresh");
-        framDataLoaded = false;
-    }
-
-    framBusy = false;
-}
-
-void WaterAlgorithm::saveCycleToStorage(const PumpCycle& cycle) {
-    if (saveCycleToFRAM(cycle)) {
-        LOG_INFO("");
-        LOG_INFO("Cycle saved to FRAM successfully");
-
-        // Add to framCycles for immediate access
-        framCycles.push_back(cycle);
-
-        // Keep framCycles size matching FRAM ring buffer
-        if (framCycles.size() > FRAM_MAX_CYCLES) {
-            framCycles.erase(framCycles.begin());
-        }
-    } else {
-        LOG_ERROR("");
-        LOG_ERROR("Failed to save cycle to FRAM");
-    }
-}
-
-bool WaterAlgorithm::resetErrorStatistics() {
-    bool success = resetErrorStatsInFRAM();
-    if (success) {
-        LOG_INFO("");
-        LOG_INFO("Error statistics reset requested via web interface");
-    }
-    return success;
-}
-
-bool WaterAlgorithm::getErrorStatistics(uint16_t& gap1_sum, uint16_t& gap2_sum, uint16_t& water_sum, uint32_t& last_reset) {
-    ErrorStats stats;
-    bool success = loadErrorStatsFromFRAM(stats);
-    
-    if (success) {
-        gap1_sum = stats.gap1_fail_sum;
-        gap2_sum = stats.gap2_fail_sum;
-        water_sum = stats.water_fail_sum;
-        last_reset = stats.last_reset_timestamp;
-    } else {
-        // Return defaults on failure
-        gap1_sum = gap2_sum = water_sum = 0;
-        last_reset = millis() / 1000;
-    }
-    
-    return success;
-}
-
-void WaterAlgorithm::addManualVolume(uint16_t volumeML) {
-    // 🆕 MODIFIED: Manual pump decreases ONLY available volume, NOT daily volume
-    
-    // Decrease available volume
-    if (availableVolumeCurrent >= volumeML) {
-        availableVolumeCurrent -= volumeML;
-    } else {
-        availableVolumeCurrent = 0;
-    }
-    
-    // Save to FRAM
-    if (!saveAvailableVolumeToFRAM(availableVolumeMax, availableVolumeCurrent)) {
-        LOG_WARNING("");
-        LOG_WARNING("Failed to save available volume to FRAM after manual pump");
-    }
-    
-    LOG_INFO("Manual volume: %dml | Available: %lu/%lu ml", 
-             volumeML, availableVolumeCurrent, availableVolumeMax);
-    
-    // Check if available volume empty
-    if (availableVolumeCurrent == 0) {
-        LOG_WARNING("");
-        LOG_WARNING("Available volume empty after manual pump!");
-    }
-}
-
-
-// ============================================
-// 🆕 CHECK RESET BUTTON (Pin 8 - Active LOW)
-// Funkcja: TYLKO reset z błędu (resetFromError)
-// ============================================
-
-void WaterAlgorithm::checkResetButton() {
-    static bool lastButtonState = HIGH;           // Poprzedni stan (HIGH = not pressed)
-    static uint32_t lastDebounceTime = 0;         // Czas ostatniej zmiany
-    static bool buttonPressed = false;            // Czy przycisk jest wciśnięty
-    
-    const uint32_t DEBOUNCE_DELAY = 50;           // 50ms debouncing
-    
-    // Read current button state (INPUT_PULLUP, więc LOW = pressed)
-    bool currentButtonState = digitalRead(RESET_PIN);
-    
-    // Sprawdź czy stan się zmienił
-    if (currentButtonState != lastButtonState) {
-        lastDebounceTime = millis();
-    }
-    
-    // Debouncing - sprawdź czy stan jest stabilny przez DEBOUNCE_DELAY
-    if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
-        
-        // Przycisk został naciśnięty (HIGH → LOW)
-        if (currentButtonState == LOW && !buttonPressed) {
-            buttonPressed = true;
-            LOG_INFO("");
-            LOG_INFO("🔘 Reset button pressed");
-        }
-        
-        // Przycisk został zwolniony (LOW → HIGH)
-        else if (currentButtonState == HIGH && buttonPressed) {
-            buttonPressed = false;
-            LOG_INFO("");
-            LOG_INFO("🔘 Reset button released");
-            
-            // Sprawdź czy system jest w stanie błędu
-            if (currentState == STATE_ERROR) {
-                LOG_INFO("");
-                LOG_INFO("====================================");
-                LOG_INFO("✅ RESET FROM ERROR STATE");
-                LOG_INFO("Previous error: %s", 
-                    lastError == ERROR_DAILY_LIMIT ? "ERR1 (Daily Limit)" :
-                    lastError == ERROR_PUMP_FAILURE ? "ERR2 (Pump Failure)" : 
-                    "ERR0 (Both)");
-                LOG_INFO("====================================");
-                
-                // Wywołaj reset z błędu
-                resetFromError();
-                
-                LOG_INFO("");
-                LOG_INFO("====================================");
-                LOG_INFO("System state: %s", getStateString());
-                LOG_INFO("Error signal: CLEARED");
-                LOG_INFO("====================================");
-                
-                // Visual feedback - krótkie mignięcie LED (potwierdzenie)
-                digitalWrite(ERROR_SIGNAL_PIN, HIGH);
-                delay(100);
-                digitalWrite(ERROR_SIGNAL_PIN, LOW);
-                delay(100);
-                digitalWrite(ERROR_SIGNAL_PIN, HIGH);
-                delay(100);
-                digitalWrite(ERROR_SIGNAL_PIN, LOW);
-                
-            } else {
-                LOG_INFO("");
-                LOG_INFO("====================================");
-                LOG_INFO("ℹ️ System not in error state");
-                LOG_INFO("Current state: %s", getStateString());
-                LOG_INFO("Reset button ignored (no error to clear)");
-                LOG_INFO("====================================");
-            }
-        }
-    }
-    
-    lastButtonState = currentButtonState;
-}
-
-// ===============================
-// 🆕 NEW: AVAILABLE VOLUME METHODS
-// ===============================
-
-void WaterAlgorithm::setAvailableVolume(uint32_t maxMl) {
-    if (maxMl < 100 || maxMl > 10000) {
-        LOG_ERROR("");
-        LOG_ERROR("Invalid available volume: %lu (range: 100-10000ml)", maxMl);
-        return;
-    }
-    
-    availableVolumeMax = maxMl;
-    availableVolumeCurrent = maxMl;
-    
-    if (saveAvailableVolumeToFRAM(availableVolumeMax, availableVolumeCurrent)) {
-        LOG_INFO("");
-        LOG_INFO("Available volume set to %lu ml", maxMl);
-    }
-}
-
-void WaterAlgorithm::refillAvailableVolume() {
-    availableVolumeCurrent = availableVolumeMax;
-    
-    if (saveAvailableVolumeToFRAM(availableVolumeMax, availableVolumeCurrent)) {
-        LOG_INFO("");
-        LOG_INFO("Available volume refilled to %lu ml", availableVolumeMax);
-    }
-}
-
-uint32_t WaterAlgorithm::getAvailableVolumeMax() const {
-    return availableVolumeMax;
-}
-
-uint32_t WaterAlgorithm::getAvailableVolumeCurrent() const {
-    return availableVolumeCurrent;
-}
-
-bool WaterAlgorithm::isAvailableVolumeEmpty() const {
-    return availableVolumeCurrent == 0;
-}
-
-// ===============================
-// 🆕 NEW: CONFIGURABLE FILL_WATER_MAX METHODS
-// ===============================
-
-void WaterAlgorithm::setFillWaterMax(uint16_t maxMl) {
-    if (maxMl < 100 || maxMl > 10000) {
-        LOG_ERROR("");
-        LOG_ERROR("Invalid fill water max: %d (range: 100-10000ml)", maxMl);
-        return;
-    }
-    
-    fillWaterMaxConfig = maxMl;
-    
-    if (saveFillWaterMaxToFRAM(fillWaterMaxConfig)) {
-        LOG_INFO("");
-        LOG_INFO("Fill water max set to %d ml", maxMl);
-    }
-}
-
-uint16_t WaterAlgorithm::getFillWaterMax() const {
-    return fillWaterMaxConfig;
-}
-
-bool WaterAlgorithm::resetDailyVolume() {
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("MANUAL DAILY VOLUME RESET REQUESTED");
-    LOG_INFO("Previous volume: %dml", dailyVolumeML);
-    LOG_INFO("Current UTC day: %lu", lastResetUTCDay);
-    LOG_INFO("====================================");
-    
-    if (isPumpActive()) {
-        LOG_WARNING("");
-        LOG_WARNING("❌ Reset blocked - pump is active");
-        return false;
-    }
-    
-    dailyVolumeML = 0;
-    todayCycles.clear();
-    
-    if (!saveDailyVolumeToFRAM(dailyVolumeML, lastResetUTCDay)) {
-        LOG_ERROR("");
-        LOG_ERROR("⚠️ Failed to save reset volume to FRAM");
-        return false;
-    }
-    LOG_INFO("");
-    LOG_INFO("====================================");
-    LOG_INFO("✅ Daily volume reset to 0ml");
-    LOG_INFO("UTC day remains: %lu", lastResetUTCDay);
-    LOG_INFO("====================================");
-    
-    return true;
-}
-
-// ===============================================
-// UI STATUS FUNCTIONS - User-friendly descriptions
-// ===============================================
-
-String WaterAlgorithm::getStateDescription() const {
-    // ============== SYSTEM DISABLED STATE ==============
-    if (isSystemDisabled()) {
-        return "SYSTEM OFF";
-    }
-    
-    switch (currentState) {
-        case STATE_IDLE:
-            return "IDLE - Waiting for sensors";
-
-        case STATE_PRE_QUALIFICATION:
-            return "Pre-qualification (quick test)";
-
-        case STATE_SETTLING:
-            return "Settling - water calming down";
-
-        case STATE_DEBOUNCING:
-            return "Debouncing - verifying drain";
-
-        case STATE_PUMPING_AND_VERIFY:
-            if (isPumpActive()) {
-                return "Pump operating + monitoring sensors";
-            } else {
-                return "Verifying sensor response";
-            }
-
-        case STATE_LOGGING:
-            return "Logging cycle data";
-
-        case STATE_ERROR:
-            // Detailed error message
-            switch (lastError) {
-                case ERROR_DAILY_LIMIT:
-                    return "ERROR - Daily limit exceeded";
-                case ERROR_PUMP_FAILURE:
-                    return "ERROR - Pump failure (3 attempts failed)";
-                case ERROR_BOTH:
-                    return "ERROR - Multiple errors detected";
-                default:
-                    return "ERROR - Unknown error";
-            }
-            
-        case STATE_MANUAL_OVERRIDE:
-            return "Manual pump operation";
-            
-        default:
-            return "Unknown state";
-    }
-}
-
 uint32_t WaterAlgorithm::getRemainingSeconds() const {
-    uint32_t currentTime = getCurrentTimeSeconds();
-    uint32_t elapsed = 0;
-    uint32_t total = 0;
-    int32_t remaining = 0;
-    
     switch (currentState) {
-        case STATE_IDLE:
-        case STATE_LOGGING:
-        case STATE_ERROR:
-        case STATE_MANUAL_OVERRIDE:
-            // No countdown for these states
-            return 0;
-
-        case STATE_PRE_QUALIFICATION:
-            // Pre-qualification timeout
-            elapsed = currentTime - stateStartTime;
-            if (elapsed >= PRE_QUAL_WINDOW) {
-                return 0;
-            }
-            return PRE_QUAL_WINDOW - elapsed;
-
-        case STATE_SETTLING:
-            // Settling countdown
-            elapsed = currentTime - stateStartTime;
-            if (elapsed >= SETTLING_TIME) {
-                return 0;
-            }
-            return SETTLING_TIME - elapsed;
-
-        case STATE_DEBOUNCING:
-            // Debouncing timeout
-            elapsed = currentTime - stateStartTime;
-            if (elapsed >= TOTAL_DEBOUNCE_TIME) {
-                return 0;
-            }
-            return TOTAL_DEBOUNCE_TIME - elapsed;
-
-        case STATE_PUMPING_AND_VERIFY:
-            // Pump + verify - return time until timeout (WATER_TRIGGER_MAX_TIME)
-            elapsed = currentTime - pumpStartTime;
-            if (elapsed >= WATER_TRIGGER_MAX_TIME) {
-                return 0;
-            }
-            return WATER_TRIGGER_MAX_TIME - elapsed;
-
+        case STATE_PUMPING: {
+            uint32_t elapsed = millis() - pumpStartMs;
+            if (elapsed >= maxPumpDurationMs) return 0;
+            return (maxPumpDurationMs - elapsed) / 1000UL;
+        }
+        case STATE_LOGGING: {
+            uint32_t elapsed = millis() - stateStartMs;
+            uint32_t total   = (uint32_t)(LOGGING_TIME * 1000);
+            if (elapsed >= total) return 0;
+            return (total - elapsed) / 1000UL;
+        }
         default:
             return 0;
     }
 }
 
+uint32_t WaterAlgorithm::getPumpElapsedMs() const {
+    if (currentState != STATE_PUMPING) return 0;
+    return millis() - pumpStartMs;
+}

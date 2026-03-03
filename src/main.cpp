@@ -91,10 +91,10 @@ void setup() {
     LOG_INFO("");
     LOG_INFO("=== Production Mode - Full Water System ===");
 
-    initWaterSensors();
+    initWaterSensor();
     initPumpController();
 
-    initNVS();
+    initNVS();          // initNVS() wywołuje initFRAM() wewnętrznie (config.cpp)
     loadVolumeFromNVS();
     waterAlgorithm.initFromFRAM();
 
@@ -122,9 +122,6 @@ void setup() {
         LOG_WARNING("⚠️ Daily volume tracking may be affected");
         LOG_WARNING("");
     }
-    LOG_INFO("Initializing daily volume tracking...");
-    waterAlgorithm.initDailyVolume();
-
     // Initialize security
     initAuthManager();
     initSessionManager();
@@ -146,9 +143,9 @@ void setup() {
     LOG_INFO("Current Time: %s", getCurrentTimestamp().c_str());
     LOG_INFO("Water Algorithm:");
     LOG_INFO("  State: %s", waterAlgorithm.getStateString());
-    LOG_INFO("  Daily Volume: %d / %d ml", 
-             waterAlgorithm.getDailyVolume(), FILL_WATER_MAX);
-    LOG_INFO("  UTC Day: %lu", waterAlgorithm.getLastResetUTCDay());
+    LOG_INFO("  Rolling 24h: %d ml", waterAlgorithm.getRolling24hVolume());
+    LOG_INFO("  Max dose: %d ml", waterAlgorithm.getConfig().max_dose_ml);
+    LOG_INFO("  EMA bootstrap: %d/%d", waterAlgorithm.getEma().bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
     
     if (isWiFiConnected()) {
         LOG_INFO("Dashboard: http://");
@@ -179,32 +176,16 @@ void loop() {
         ESP.restart();
     }
     
-    // Update water sensors every loop
-    updateWaterSensors();
+    // Sensor + algorytm — każdy cykl loop
+    updateWaterSensor();
     waterAlgorithm.update();
-    
-    // Update other systems every 100ms
+
+    // Pozostałe systemy co 100 ms
     if (now - lastUpdate >= 100) {
         updatePumpController();
         updateSessionManager();
         updateRateLimiter();
         updateWiFi();
-        
-        // ============== AUTO PUMP TRIGGER (with system disable check) ==============
-        // Only trigger auto pump if:
-        // - System is NOT disabled
-        // - Auto mode is enabled
-        // - Water level is low (shouldActivatePump)
-        // - Pump is not already running
-        if (!isSystemDisabled() && 
-            currentPumpSettings.autoModeEnabled && 
-            shouldActivatePump() && 
-            !isPumpActive()) {
-            LOG_INFO("");
-            LOG_INFO("Auto pump triggered - water level low");    
-            triggerPump(currentPumpSettings.manualCycleSeconds, "AUTO_PUMP");
-        }
-        
         lastUpdate = now;
     }
 

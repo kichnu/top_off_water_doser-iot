@@ -195,7 +195,7 @@ void initializeRTC() {
     
     LOG_INFO("Attempting to initialize external DS3231 RTC...");
     
-    Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
     
     Wire.beginTransmission(0x68);

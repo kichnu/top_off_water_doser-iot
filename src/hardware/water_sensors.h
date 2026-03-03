@@ -3,40 +3,31 @@
 
 #include <Arduino.h>
 
-// ============== FAZY PROCESU DETEKCJI ==============
+// ============================================================
+// Czujniki pływakowe — para równoległa na jednym pinie (WATER_SENSOR_PIN).
+// Logika: LOW = woda poniżej poziomu (dowolny czujnik reaguje).
+//
+// Debouncing: próbkowanie co DEBOUNCE_INTERVAL_MS,
+//             wymagane DEBOUNCE_COUNTER kolejnych LOW.
+// ============================================================
+
 enum SensorPhase {
-    PHASE_IDLE = 0,           // Czekanie na pierwszy LOW
-    PHASE_PRE_QUALIFICATION,  // Szybki test (30s, 3×LOW)
-    PHASE_SETTLING,           // Uspokojenie wody (60s)
-    PHASE_DEBOUNCING          // Pełna weryfikacja (1200s, 4×LOW)
+    PHASE_IDLE = 0,
+    PHASE_DEBOUNCING
 };
 
-// ============== PODSTAWOWE FUNKCJE ==============
-void initWaterSensors();
-void updateWaterSensors();
-void checkWaterSensors();
+// ============== INICJALIZACJA I AKTUALIZACJA ==============
+void initWaterSensor();
+void updateWaterSensor();      // Wywołaj z loop()
 
-// ============== ODCZYT STANU CZUJNIKÓW ==============
-bool readWaterSensor1();
-bool readWaterSensor2();
-String getWaterStatus();
-bool shouldActivatePump();
+// ============== ODCZYT ==============
+bool readWaterSensor();        // Surowy odczyt GPIO (true = LOW = woda poniżej poziomu)
+void resetSensorProcess();     // Powrót do PHASE_IDLE
 
-// ============== ZARZĄDZANIE PROCESEM ==============
-void resetSensorProcess();
+// ============== GETTERY STANU (dla UI / diagnostyki) ==============
+SensorPhase getSensorPhase();
+const char* getSensorPhaseString();
+uint8_t     getDebounceCounter();    // Bieżąca liczba potwierdzonych LOW
+uint32_t    getPhaseElapsedMs();     // ms od startu bieżącej fazy
 
-// ============== GETTERY STANU (dla UI/diagnostyki) ==============
-SensorPhase getCurrentPhase();
-const char* getPhaseString();
-uint8_t getPreQualCounter();
-uint8_t getDebounceCounter(uint8_t sensorNum);   // sensorNum: 1 lub 2
-bool isDebounceComplete(uint8_t sensorNum);      // sensorNum: 1 lub 2
-uint32_t getPhaseElapsedTime();                  // sekundy od startu bieżącej fazy
-uint32_t getPhaseRemainingTime();                // sekundy do timeout bieżącej fazy
-
-// ============== LEGACY (kompatybilność) ==============
-void resetDebounceProcess();
-bool isDebounceProcessActive();
-uint32_t getDebounceElapsedTime();
-
-#endif
+#endif // WATER_SENSORS_H

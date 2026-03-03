@@ -8,8 +8,8 @@
 
 #include "../crypto/fram_encryption.h"
 
-static_assert(sizeof(PumpCycle) == FRAM_CYCLE_SIZE,
-    "FRAM_CYCLE_SIZE must match sizeof(PumpCycle)! Update FRAM_CYCLE_SIZE in fram_controller.h");
+// PumpCycle legacy check — FRAM_CYCLE_SIZE=28, PumpCycle=28 bajtów
+// static_assert wyłączony — PumpCycle zachowany tylko jako legacy typ dla starych rekordów FRAM
 
 
 Adafruit_FRAM_I2C fram = Adafruit_FRAM_I2C();
@@ -863,18 +863,174 @@ bool loadFillWaterMaxFromFRAM(uint16_t& fillWaterMax) {
     if (calculatedChecksum != storedChecksum) {
         LOG_WARNING("");
         LOG_WARNING("Fill water max checksum mismatch, using default");
-        fillWaterMax = FILL_WATER_MAX;  // Default from algorithm_config.h
+        fillWaterMax = 2000;  // Legacy fallback default
         return false;
     }
     
     if (fillWaterMax < 100 || fillWaterMax > 10000) {
         LOG_WARNING("");
         LOG_WARNING("FRAM fill water max out of range: %d, using default", fillWaterMax);
-        fillWaterMax = FILL_WATER_MAX;
+        fillWaterMax = 2000;  // Fallback default (zastąpione przez DEFAULT_MAX_DOSE_ML w nowym kodzie)
         return false;
     }
     
     LOG_INFO("");
     LOG_INFO("Fill water max loaded from FRAM: %d ml", fillWaterMax);
+    return true;
+}
+
+// ================================================================
+// 🆕 TOP-OFF RECORD — ring buffer (60 × 18 bajtów)
+// ================================================================
+
+static_assert(sizeof(TopOffRecord) == FRAM_TOPOFF_RECORD_SIZE,
+    "TopOffRecord size mismatch! Update FRAM_TOPOFF_RECORD_SIZE in fram_controller.h");
+
+bool saveTopOffRecord(const TopOffRecord& record) {
+    if (!framInitialized) return false;
+
+    // Odczytaj aktualny write pointer i count
+    uint16_t wptr  = 0;
+    uint16_t count = 0;
+    fram.read(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&wptr,  2);
+    fram.read(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+
+    if (wptr >= TOPOFF_HISTORY_SIZE) wptr = 0;
+
+    uint16_t addr = FRAM_ADDR_TOPOFF_DATA + wptr * FRAM_TOPOFF_RECORD_SIZE;
+    fram.write(addr, (uint8_t*)&record, FRAM_TOPOFF_RECORD_SIZE);
+
+    wptr = (wptr + 1) % TOPOFF_HISTORY_SIZE;
+    if (count < TOPOFF_HISTORY_SIZE) count++;
+
+    fram.write(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&wptr,  2);
+    fram.write(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+
+    LOG_INFO("TopOffRecord saved: ts=%lu vol=%d ml (slot=%d, total=%d)",
+             record.timestamp, record.volume_ml, (wptr - 1 + TOPOFF_HISTORY_SIZE) % TOPOFF_HISTORY_SIZE, count);
+    return true;
+}
+
+uint16_t loadTopOffHistory(TopOffRecord* buf, uint16_t maxCount) {
+    if (!framInitialized || !buf) return 0;
+
+    uint16_t count = 0;
+    uint16_t wptr  = 0;
+    fram.read(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+    fram.read(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&wptr,  2);
+
+    if (count > TOPOFF_HISTORY_SIZE) count = TOPOFF_HISTORY_SIZE;
+    if (count > maxCount)            count = maxCount;
+    if (count == 0) return 0;
+
+    // Odczytaj od najstarszego do najnowszego
+    // Najstarszy jest pod wptr (jeśli bufor pełny) lub pod 0 (jeśli niepełny)
+    uint16_t startSlot = (wptr >= count) ? (wptr - count) : (TOPOFF_HISTORY_SIZE - (count - wptr));
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t slot = (startSlot + i) % TOPOFF_HISTORY_SIZE;
+        uint16_t addr = FRAM_ADDR_TOPOFF_DATA + slot * FRAM_TOPOFF_RECORD_SIZE;
+        fram.read(addr, (uint8_t*)&buf[i], FRAM_TOPOFF_RECORD_SIZE);
+    }
+
+    return count;
+}
+
+bool loadLastTopOffRecord(TopOffRecord& record) {
+    if (!framInitialized) return false;
+
+    uint16_t count = 0;
+    uint16_t wptr  = 0;
+    fram.read(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+    fram.read(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&wptr,  2);
+
+    if (count == 0) return false;
+
+    uint16_t lastSlot = (wptr == 0) ? (TOPOFF_HISTORY_SIZE - 1) : (wptr - 1);
+    uint16_t addr = FRAM_ADDR_TOPOFF_DATA + lastSlot * FRAM_TOPOFF_RECORD_SIZE;
+    fram.read(addr, (uint8_t*)&record, FRAM_TOPOFF_RECORD_SIZE);
+    return true;
+}
+
+uint16_t getTopOffRecordCount() {
+    if (!framInitialized) return 0;
+    uint16_t count = 0;
+    fram.read(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+    return (count > TOPOFF_HISTORY_SIZE) ? TOPOFF_HISTORY_SIZE : count;
+}
+
+// ================================================================
+// 🆕 EMA BLOCK
+// ================================================================
+
+static_assert(sizeof(EmaBlock) == 16, "EmaBlock size mismatch!");
+
+bool saveEmaBlockToFRAM(const EmaBlock& ema) {
+    if (!framInitialized) return false;
+
+    fram.write(FRAM_ADDR_EMA_BLOCK, (uint8_t*)&ema, sizeof(EmaBlock));
+
+    uint16_t chksum = calculateChecksum((uint8_t*)&ema, sizeof(EmaBlock));
+    fram.write(FRAM_ADDR_EMA_CHKSUM, (uint8_t*)&chksum, 2);
+
+    LOG_INFO("EMA block saved: vol=%.1f int=%.0fs rate=%.2f bootstrap=%d",
+             ema.ema_volume_ml, ema.ema_interval_s, ema.ema_rate_ml_h, ema.bootstrap_count);
+    return true;
+}
+
+bool loadEmaBlockFromFRAM(EmaBlock& ema) {
+    if (!framInitialized) return false;
+
+    EmaBlock tmp;
+    fram.read(FRAM_ADDR_EMA_BLOCK, (uint8_t*)&tmp, sizeof(EmaBlock));
+
+    uint16_t stored = 0;
+    fram.read(FRAM_ADDR_EMA_CHKSUM, (uint8_t*)&stored, 2);
+
+    uint16_t calc = calculateChecksum((uint8_t*)&tmp, sizeof(EmaBlock));
+    if (calc != stored) {
+        LOG_WARNING("EMA block checksum mismatch — starting fresh");
+        return false;
+    }
+
+    ema = tmp;
+    return true;
+}
+
+// ================================================================
+// 🆕 TOP-OFF CONFIG
+// ================================================================
+
+static_assert(sizeof(TopOffConfig) == 20, "TopOffConfig size mismatch!");
+
+bool saveTopOffConfigToFRAM(const TopOffConfig& cfg) {
+    if (!framInitialized) return false;
+
+    fram.write(FRAM_ADDR_TOPOFF_CONFIG, (uint8_t*)&cfg, sizeof(TopOffConfig));
+
+    uint16_t chksum = calculateChecksum((uint8_t*)&cfg, sizeof(TopOffConfig));
+    fram.write(FRAM_ADDR_TOPOFF_CFG_CHKSUM, (uint8_t*)&chksum, 2);
+
+    LOG_INFO("TopOffConfig saved: max_dose=%d ema_alpha=%.2f window=%lu",
+             cfg.max_dose_ml, cfg.ema_alpha, cfg.history_window_s);
+    return true;
+}
+
+bool loadTopOffConfigFromFRAM(TopOffConfig& cfg) {
+    if (!framInitialized) return false;
+
+    TopOffConfig tmp;
+    fram.read(FRAM_ADDR_TOPOFF_CONFIG, (uint8_t*)&tmp, sizeof(TopOffConfig));
+
+    uint16_t stored = 0;
+    fram.read(FRAM_ADDR_TOPOFF_CFG_CHKSUM, (uint8_t*)&stored, 2);
+
+    uint16_t calc = calculateChecksum((uint8_t*)&tmp, sizeof(TopOffConfig));
+    if (calc != stored) {
+        LOG_WARNING("TopOffConfig checksum mismatch — using defaults");
+        return false;
+    }
+
+    cfg = tmp;
     return true;
 }

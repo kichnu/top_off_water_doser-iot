@@ -2,118 +2,155 @@
 #define ALGORITHM_CONFIG_H
 #include <Arduino.h>
 
-#define LOGGING_TIME            5      // czas na logowanie po cyklu
+// ============================================================
+// DEBOUNCING CZUJNIKA WEJŚCIOWEGO
+// Czujniki pływakowe (para równoległa) na jednym pinie.
+// Próbkowanie co DEBOUNCE_INTERVAL_MS ms.
+// Wyzwolenie po DEBOUNCE_COUNTER kolejnych odczytach LOW.
+// Efektywny czas debouncingu = DEBOUNCE_INTERVAL_MS × DEBOUNCE_COUNTER
+// ============================================================
+#define DEBOUNCE_INTERVAL_MS     200   // ms między próbkowaniami
+#define DEBOUNCE_COUNTER           5   // kolejnych LOW wymaganych (= 1000 ms efektywnie)
 
-// ============== PARAMETRY PRE-QUALIFICATION (szybki test pierwszego LOW) ==============
-#define PRE_QUAL_WINDOW         30     // sekundy - okno czasowe na potwierdzenie
-#define PRE_QUAL_INTERVAL       10     // sekundy - interwał między pomiarami
-#define PRE_QUAL_CONFIRM_COUNT  3      // wymagana liczba kolejnych LOW
+// ============================================================
+// RELEASE VERIFICATION (po uruchomieniu pompy)
+// Czujnik musi wrócić do HIGH (RELEASE_DEBOUNCE_COUNT razy)
+// zanim cykl zostanie uznany za zakończony.
+// ============================================================
+#define RELEASE_CHECK_INTERVAL_MS  500  // ms między sprawdzeniami czujnika
+#define RELEASE_DEBOUNCE_COUNT       3  // kolejnych HIGH potrzebnych do potwierdzenia
 
-// ============== PARAMETRY SETTLING (uspokojenie wody) ==============
-#define SETTLING_TIME           60     // sekundy - czas pasywnego czekania
+// ============================================================
+// LOGGING
+// ============================================================
+#define LOGGING_TIME                 5  // s — czas fazy logowania po cyklu
 
-// ============== PARAMETRY DEBOUNCING FAZY 1 (weryfikacja opadania wody) ==============
-#define TOTAL_DEBOUNCE_TIME     1200   // sekundy - maksymalny czas fazy debouncing (20 minut)
-#define DEBOUNCE_INTERVAL       60     // sekundy - interwał między pomiarami
-#define DEBOUNCE_COUNTER        4      // wymagana liczba kolejnych LOW dla zaliczenia
+// ============================================================
+// SYGNALIZACJA BŁĘDÓW (ERROR_SIGNAL_PIN)
+// ============================================================
+#define ERROR_PULSE_HIGH           100  // ms — czas impulsu HIGH
+#define ERROR_PULSE_LOW            100  // ms — przerwa między impulsami
+#define ERROR_PAUSE               2000  // ms — pauza przed powtórzeniem sekwencji
 
-// ============== PARAMETRY RELEASE VERIFICATION (faza 2 - podnoszenie wody) ==============
-#define RELEASE_CHECK_INTERVAL  2      // sekundy między sprawdzeniami czujników
-#define RELEASE_DEBOUNCE_COUNT  3      // wymagana liczba kolejnych HIGH dla potwierdzenia
-#define WATER_TRIGGER_MAX_TIME  30    // max czas na reakcję czujników po starcie pompy (sekundy)
+// ============================================================
+// DOMYŚLNE WARTOŚCI KONFIGURACJI ALGORYTMU
+// Używane gdy FRAM nie zawiera zapisanej konfiguracji.
+// Nadpisywane przez użytkownika przez Provisioning lub GUI.
+// ============================================================
+#define DEFAULT_MAX_DOSE_ML         300     // Limit bezpieczeństwa jednej dolewki [ml]
+#define DEFAULT_EMA_ALPHA          0.20f    // Współczynnik wygładzania EMA [0.10–0.40]
+#define DEFAULT_VOL_YELLOW_PCT       30     // Próg żółty — odchylenie objętości [%]
+#define DEFAULT_VOL_RED_PCT          60     // Próg czerwony — odchylenie objętości [%]
+#define DEFAULT_RATE_YELLOW_PCT      40     // Próg żółty — odchylenie tempa [%]
+#define DEFAULT_RATE_RED_PCT         80     // Próg czerwony — odchylenie tempa [%]
+#define DEFAULT_HISTORY_WINDOW_S  86400     // Okno historii [s] — domyślnie 24h
+#define DEFAULT_MIN_BOOTSTRAP         5     // Min. dolewek przed aktywacją alertów
 
-// ============== PARAMETRY POMPY ==============
-#define PUMP_MAX_ATTEMPTS       3      // Maksymalna liczba prób pompy
-#define SINGLE_DOSE_VOLUME      200    // ml - objętość jednej dolewki
-#define FILL_WATER_MAX          2000   // ml - max dolewka na dobę
+// ============================================================
+// SPRAWDZENIA INTEGRALNOŚCI STAŁYCH
+// ============================================================
+static_assert(DEBOUNCE_INTERVAL_MS >= 50 && DEBOUNCE_INTERVAL_MS <= 2000,
+    "DEBOUNCE_INTERVAL_MS must be 50-2000 ms");
+static_assert(DEBOUNCE_COUNTER >= 2 && DEBOUNCE_COUNTER <= 20,
+    "DEBOUNCE_COUNTER must be 2-20");
+static_assert(RELEASE_DEBOUNCE_COUNT >= 1 && RELEASE_DEBOUNCE_COUNT <= 10,
+    "RELEASE_DEBOUNCE_COUNT must be 1-10");
+static_assert(DEFAULT_MAX_DOSE_ML >= 50 && DEFAULT_MAX_DOSE_ML <= 2000,
+    "DEFAULT_MAX_DOSE_ML must be 50-2000 ml");
 
-// ============== SYGNALIZACJA BŁĘDÓW ==============
-#define ERROR_PULSE_HIGH        100    // ms - czas impulsu HIGH
-#define ERROR_PULSE_LOW         100    // ms - czas przerwy między impulsami
-#define ERROR_PAUSE             2000   // ms - pauza przed powtórzeniem sekwencji
-
-// ============== LEGACY (dla kompatybilności) ==============
-#define TIME_GAP_1_MAX          TOTAL_DEBOUNCE_TIME  // alias dla starych odwołań
-#define DEBOUNCE_COUNTER_1      DEBOUNCE_COUNTER     // alias dla starych odwołań
-
-// ============== SPRAWDZENIA INTEGRALNOŚCI ==============
-static_assert(PRE_QUAL_WINDOW >= 20 && PRE_QUAL_WINDOW <= 60, "PRE_QUAL_WINDOW must be 20-60s");
-static_assert(PRE_QUAL_INTERVAL >= 5 && PRE_QUAL_INTERVAL <= 15, "PRE_QUAL_INTERVAL must be 5-15s");
-static_assert(PRE_QUAL_CONFIRM_COUNT >= 2 && PRE_QUAL_CONFIRM_COUNT <= 5, "PRE_QUAL_CONFIRM_COUNT must be 2-5");
-static_assert(SETTLING_TIME >= 30 && SETTLING_TIME <= 120, "SETTLING_TIME must be 30-120s");
-static_assert(TOTAL_DEBOUNCE_TIME >= 600 && TOTAL_DEBOUNCE_TIME <= 2400, "TOTAL_DEBOUNCE_TIME must be 600-2400s");
-static_assert(DEBOUNCE_INTERVAL >= 30 && DEBOUNCE_INTERVAL <= 120, "DEBOUNCE_INTERVAL must be 30-120s");
-static_assert(DEBOUNCE_COUNTER >= 2 && DEBOUNCE_COUNTER <= 10, "DEBOUNCE_COUNTER must be 2-10");
-static_assert(SINGLE_DOSE_VOLUME >= 100 && SINGLE_DOSE_VOLUME <= 800, "SINGLE_DOSE_VOLUME must be 100-300ml");
-static_assert(FILL_WATER_MAX >= 1000 && FILL_WATER_MAX <= 3000, "FILL_WATER_MAX must be 1000-3000ml");
-static_assert(LOGGING_TIME == 5, "LOGGING_TIME must be 5 seconds");
-
-// ============== STANY ALGORYTMU ==============
+// ============================================================
+// STANY ALGORYTMU
+// ============================================================
 enum AlgorithmState {
-    STATE_IDLE = 0,             // Oczekiwanie na pierwszy LOW
-
-    // Faza 1: Debouncing opadania wody
-    STATE_PRE_QUALIFICATION,    // Szybki test pierwszego LOW (30s, 3×LOW)
-    STATE_SETTLING,             // Czas uspokojenia wody (60s)
-    STATE_DEBOUNCING,           // Pełna weryfikacja LOW (1200s, 4×LOW)
-
-    // Faza 2: Pompowanie i weryfikacja
-    STATE_PUMPING_AND_VERIFY,   // Pompa + monitoring czujników (240s timeout)
-
-    // Zakończenie
-    STATE_LOGGING,              // Logowanie wyników (5s)
-    STATE_ERROR,                // Stan błędu
-    STATE_MANUAL_OVERRIDE       // Manual pump przerwał cykl
+    STATE_IDLE = 0,         // Oczekiwanie — sensor callback wyzwoli przejście
+    STATE_DEBOUNCING,       // Debouncing czujnika w toku (obsługiwany przez water_sensors)
+    STATE_PUMPING,          // Pompa aktywna — czekanie na zwolnienie czujnika lub timeout
+    STATE_LOGGING,          // Krótka faza po cyklu — zapis do FRAM, obliczenie EMA
+    STATE_ERROR,            // Błąd — oczekiwanie na reset
+    STATE_MANUAL_OVERRIDE   // Ręczna pompa aktywna
 };
 
-// Legacy state aliases (dla kompatybilności wstecznej)
-#define STATE_TRYB_1_WAIT       STATE_DEBOUNCING
-#define STATE_TRYB_1_DELAY      STATE_SETTLING
-#define STATE_TRYB_2_PUMP       STATE_PUMPING_AND_VERIFY
-#define STATE_TRYB_2_VERIFY     STATE_PUMPING_AND_VERIFY
-#define STATE_TRYB_2_WAIT_GAP2  STATE_LOGGING
-
-// ============== KODY BŁĘDÓW ==============
+// ============================================================
+// KODY BŁĘDÓW
+// ============================================================
 enum ErrorCode {
-    ERROR_NONE = 0,
-    ERROR_DAILY_LIMIT = 1,      // ERR1: przekroczono FILL_WATER_MAX
-    ERROR_PUMP_FAILURE = 2,     // ERR2: 3 nieudane próby pompy
-    ERROR_BOTH = 3              // ERR0: oba błędy
+    ERROR_NONE        = 0,
+    ERROR_DAILY_LIMIT = 1,  // Przekroczono limit 24h
+    ERROR_TIMEOUT     = 2,  // Pompa zatrzymana przez timeout (czujnik nie zwolnił)
+    ERROR_BOTH        = 3   // Oba błędy jednocześnie
 };
 
-// ============== STRUKTURA CYKLU ==============
-struct PumpCycle {
-    uint32_t timestamp;         // Unix timestamp rozpoczęcia
-    uint32_t trigger_time;      // Czas aktywacji TRIGGER
-    uint32_t time_gap_1;        // Czas między zaliczeniem S1 i S2 (opadanie)
-    uint32_t time_gap_2;        // Czas między potwierdzeniem S1 i S2 (podnoszenie)
-    uint32_t water_trigger_time;// Czas reakcji czujników na pompę
-    uint16_t pump_duration;     // Rzeczywisty czas pracy pompy
-    uint8_t  pump_attempts;     // Liczba prób pompy
-    uint8_t  sensor_results;    // Flagi wyników
-    uint8_t  error_code;        // Kod błędu
-    uint16_t volume_dose;       // Objętość w ml
+// ============================================================
+// REKORD DOLEWKI — zapisywany do ring buffer FRAM po każdym cyklu
+// Rozmiar: 4+2+4+4+1+1+1+1 = 18 bajtów
+// ============================================================
+struct TopOffRecord {
+    // Pola ułożone dla naturalnego wyrównania — sizeof = 20 bajtów
+    uint32_t timestamp;       // Unix timestamp UTC (z DS3231 RTC)
+    uint32_t interval_s;      // Czas od poprzedniej dolewki [s]
+    float    rate_ml_h;       // Tempo zużycia wody [ml/h] = volume_ml / interval_s × 3600
+    uint16_t volume_ml;       // Faktycznie dolana objętość [ml] = duration_s × flow_rate
+    int8_t   dev_volume_pct;  // Odchylenie obj. od EMA_volume [%] — zakres -127..+127
+    int8_t   dev_rate_pct;    // Odchylenie tempa od EMA_rate [%]
+    uint8_t  alert_level;     // 0 = OK, 1 = ŻÓŁTY, 2 = CZERWONY
+    uint8_t  flags;           // Bitmaska flag (patrz poniżej)
+    uint8_t  _pad[2];         // Wyrównanie do wielokrotności 4 bajtów
 
-    // Sensor results bit flags - Faza 1 (debouncing opadania)
-    static const uint8_t RESULT_GAP1_FAIL = 0x01;            // Timeout debounce (tylko 1 czujnik zaliczył)
-    static const uint8_t RESULT_GAP2_FAIL = 0x02;            // Legacy: nieużywane
-    static const uint8_t RESULT_FALSE_TRIGGER = 0x20;        // Fałszywy alarm (pre-qual OK, debounce FAIL)
-    static const uint8_t RESULT_SENSOR1_DEBOUNCE_FAIL = 0x40;// S1 nie zaliczył debounce (S2 OK)
-    static const uint8_t RESULT_SENSOR2_DEBOUNCE_FAIL = 0x80;// S2 nie zaliczył debounce (S1 OK)
-
-    // Sensor results bit flags - Faza 2 (release verification)
-    static const uint8_t RESULT_WATER_FAIL = 0x04;           // Żaden czujnik nie potwierdził
-    static const uint8_t RESULT_SENSOR1_RELEASE_FAIL = 0x08; // S1 nie potwierdził (S2 OK)
-    static const uint8_t RESULT_SENSOR2_RELEASE_FAIL = 0x10; // S2 nie potwierdził (S1 OK)
+    // Flags bitmask
+    static const uint8_t FLAG_MANUAL    = 0x01;  // Dolewka wyzwolona ręcznie z GUI
+    static const uint8_t FLAG_TIMEOUT   = 0x02;  // Zatrzymana przez timeout — czujnik nie zwolnił
+    static const uint8_t FLAG_BOOTSTRAP = 0x04;  // Rekord z okresu budowania historii EMA
 };
+static_assert(sizeof(TopOffRecord) == 20, "TopOffRecord must be exactly 20 bytes");
 
-// ============== OBLICZANIE CZASU POMPY ==============
-inline uint16_t calculatePumpWorkTime(float volumePerSecond) {
-    return (uint16_t)(SINGLE_DOSE_VOLUME / volumePerSecond);
+// ============================================================
+// BLOK EMA — persystowany w FRAM, przeżywa restart
+// Rozmiar: 4+4+4+1+3 = 16 bajtów
+// ============================================================
+struct EmaBlock {
+    float   ema_volume_ml;    // EMA typowej objętości dolewki [ml]
+    float   ema_interval_s;   // EMA typowego interwału między dolewkami [s]
+    float   ema_rate_ml_h;    // EMA tempa zużycia wody [ml/h]
+    uint8_t bootstrap_count;  // Liczba zebranych dolewek (do DEFAULT_MIN_BOOTSTRAP)
+    uint8_t _pad[3];
+};
+static_assert(sizeof(EmaBlock) == 16, "EmaBlock must be exactly 16 bytes");
+
+// ============================================================
+// KONFIGURACJA ALGORYTMU — persystowana w FRAM, nadpisuje defaults z kodu
+// Rozmiar: 2+4+1+1+1+1+4+1+1 = 16 bajtów
+// ============================================================
+struct TopOffConfig {
+    // Pola ułożone dla naturalnego wyrównania — sizeof = 20 bajtów
+    float    ema_alpha;         // Współczynnik EMA [0.10–0.40]
+    uint32_t history_window_s;  // Okno historii [s] (86400 / 129600 / 172800)
+    uint16_t max_dose_ml;       // Limit bezpieczeństwa jednej dolewki [ml]
+    uint8_t  vol_yellow_pct;    // Próg żółty — odchylenie objętości [%]
+    uint8_t  vol_red_pct;       // Próg czerwony — odchylenie objętości [%]
+    uint8_t  rate_yellow_pct;   // Próg żółty — odchylenie tempa [%]
+    uint8_t  rate_red_pct;      // Próg czerwony — odchylenie tempa [%]
+    uint8_t  is_configured;     // 0xA5 = konfiguracja zapisana w FRAM
+    uint8_t  _pad[5];           // Wyrównanie do wielokrotności 4 bajtów
+};
+static_assert(sizeof(TopOffConfig) == 20, "TopOffConfig must be exactly 20 bytes");
+
+#define TOPOFF_CONFIG_MAGIC  0xA5  // Marker: konfiguracja zapisana
+
+// ============================================================
+// POMOCNICZE OBLICZENIA
+// ============================================================
+
+// Timeout pompy [s] wynikający z limitu bezpieczeństwa i kalibracji
+inline uint16_t calculateMaxPumpTime(uint16_t maxDoseMl, float flowRateMlS) {
+    if (flowRateMlS <= 0.01f) return 120;  // fallback 2 min gdy brak kalibracji
+    return (uint16_t)(maxDoseMl / flowRateMlS);
 }
 
-inline bool validatePumpWorkTime(uint16_t pumpWorkTime) {
-    return pumpWorkTime <= WATER_TRIGGER_MAX_TIME;
+// Clamp odchylenia do zakresu int8_t
+inline int8_t clampDevPct(float dev) {
+    if (dev > 127.0f) return 127;
+    if (dev < -127.0f) return -127;
+    return (int8_t)dev;
 }
 
-#endif
+#endif // ALGORITHM_CONFIG_H

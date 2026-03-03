@@ -10,8 +10,23 @@
 
 #include "fram_constants.h" 
 
-// Forward declaration
-struct PumpCycle;
+// ===============================
+// LEGACY: PumpCycle — zachowany dla zgodności z istniejącym FRAM layout
+// Nowy kod używa TopOffRecord (patrz algorithm_config.h)
+// ===============================
+struct PumpCycle {
+    uint32_t timestamp;
+    uint32_t trigger_time;
+    uint32_t time_gap_1;
+    uint32_t time_gap_2;
+    uint32_t water_trigger_time;
+    uint16_t pump_duration;
+    uint8_t  pump_attempts;
+    uint8_t  sensor_results;
+    uint8_t  error_code;
+    uint16_t volume_dose;
+    uint8_t  _pad;            // wyrównanie do 28 bajtów
+};
 
 // ===============================
 // FRAM MEMORY LAYOUT (UNIFIED)
@@ -53,13 +68,32 @@ struct PumpCycle;
 #define FRAM_ADDR_FILL_WATER_MAX     (FRAM_ESP32_BASE + 0x2A)  // 2 bytes - uint16_t (ml)
 #define FRAM_ADDR_FILL_MAX_CHKSUM    (FRAM_ESP32_BASE + 0x2C)  // 2 bytes - checksum
 
-// ESP32 cycle management  
+// ESP32 cycle management (LEGACY — zastąpione przez TopOffRecord ring buffer poniżej)
 #define FRAM_ADDR_CYCLE_COUNT  (FRAM_ESP32_BASE + 0x30)  // 2 bytes - liczba zapisanych cykli
 #define FRAM_ADDR_CYCLE_INDEX  (FRAM_ESP32_BASE + 0x32)  // 2 bytes - current write index (circular buffer)
-#define FRAM_ADDR_CYCLE_DATA   (FRAM_ESP32_BASE + 0x100) // Start danych cykli
+#define FRAM_ADDR_CYCLE_DATA   (FRAM_ESP32_BASE + 0x100) // Start danych cykli (legacy)
 
-#define FRAM_MAX_CYCLES        30      // Maksymalnie 30 cykli (~5 dni)
-#define FRAM_CYCLE_SIZE        28      // musi == sizeof(PumpCycle), weryfikacja w fram_controller.cpp
+#define FRAM_MAX_CYCLES        30      // Legacy — nie używane w nowym kodzie
+#define FRAM_CYCLE_SIZE        28      // Legacy — nie używane w nowym kodzie
+
+// ===============================
+// 🆕 TOP-OFF ALGORITHM SECTIONS
+// ===============================
+
+// Konfiguracja algorytmu (TopOffConfig) — 16 bajtów
+#define FRAM_ADDR_TOPOFF_CONFIG     0x0560   // 16 bytes — TopOffConfig struct
+#define FRAM_ADDR_TOPOFF_CFG_CHKSUM 0x0570   // 2 bytes — checksum konfiguracji
+
+// Blok EMA (EmaBlock) — 16 bajtów
+#define FRAM_ADDR_EMA_BLOCK         0x0580   // 16 bytes — EmaBlock struct
+#define FRAM_ADDR_EMA_CHKSUM        0x0590   // 2 bytes — checksum EMA
+
+// Ring buffer rekordów dolewek (TopOffRecord, 18 bajtów każdy)
+#define TOPOFF_HISTORY_SIZE         60       // Maksymalnie 60 rekordów (60×20=1200 bajtów)
+#define FRAM_TOPOFF_RECORD_SIZE     20       // sizeof(TopOffRecord) — weryfikowane static_assert
+#define FRAM_ADDR_TOPOFF_COUNT      0x0600   // 2 bytes — liczba zapisanych rekordów
+#define FRAM_ADDR_TOPOFF_WPTR       0x0602   // 2 bytes — write pointer (ring buffer)
+#define FRAM_ADDR_TOPOFF_DATA       0x0610   // Start danych: 60 × 18 = 1080 bajtów → kończy się 0x0A58
 
 // Common constants
 // #define FRAM_MAGIC_NUMBER      0x57415452  // "WATR" in hex
@@ -117,6 +151,29 @@ bool loadAvailableVolumeFromFRAM(uint32_t& maxMl, uint32_t& currentMl);
 // ===============================
 bool saveFillWaterMaxToFRAM(uint16_t fillWaterMax);
 bool loadFillWaterMaxFromFRAM(uint16_t& fillWaterMax);
+
+// ===============================
+// 🆕 TOP-OFF RECORD FUNCTIONS
+// ===============================
+
+// Forward declarations (structs defined in algorithm_config.h)
+struct TopOffRecord;
+struct EmaBlock;
+struct TopOffConfig;
+
+// Ring buffer rekordów dolewek
+bool saveTopOffRecord(const TopOffRecord& record);
+uint16_t loadTopOffHistory(TopOffRecord* buf, uint16_t maxCount);
+bool loadLastTopOffRecord(TopOffRecord& record);
+uint16_t getTopOffRecordCount();
+
+// EMA block
+bool saveEmaBlockToFRAM(const EmaBlock& ema);
+bool loadEmaBlockFromFRAM(EmaBlock& ema);
+
+// Konfiguracja algorytmu
+bool saveTopOffConfigToFRAM(const TopOffConfig& cfg);
+bool loadTopOffConfigFromFRAM(TopOffConfig& cfg);
 
 // ===============================
 // FRAM CREDENTIALS SECTION

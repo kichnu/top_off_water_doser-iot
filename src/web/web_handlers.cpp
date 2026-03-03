@@ -7,6 +7,7 @@
 #include "../security/rate_limiter.h"
 #include "../hardware/pump_controller.h"
 #include "../hardware/water_sensors.h"
+#include "../hardware/fram_controller.h"
 #include "../hardware/rtc_controller.h"
 #include "../network/wifi_manager.h"
 #include "../config/config.h"
@@ -129,10 +130,8 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     // HARDWARE STATUS (for badges)
     // ============================================
-    json["sensor1_active"] = readWaterSensor1();
-    json["sensor2_active"] = readWaterSensor2();
+    json["sensor_active"] = readWaterSensor();
     json["pump_active"] = isPumpActive();
-    json["pump_attempt"] = waterAlgorithm.getPumpAttempts();
     json["system_error"] = (waterAlgorithm.getState() == STATE_ERROR);
     
     // ============================================
@@ -150,7 +149,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     // EXISTING STATUS FIELDS
     // ============================================
-    json["water_status"] = getWaterStatus();
+    json["water_status"] = getSensorPhaseString();
     json["pump_running"] = isPumpActive();  // kept for backwards compatibility
     json["pump_remaining"] = getPumpRemainingTime();  // kept for backwards compatibility
     json["wifi_status"] = getWiFiStatus();
@@ -381,27 +380,24 @@ void handleResetStatistics(AsyncWebServerRequest* request) {
         request->send(401, "text/plain", "Unauthorized");
         return;
     }
-    
-    // Reset statistics
-    bool success = waterAlgorithm.resetErrorStatistics();
-    
+
+    bool success = resetErrorStatsInFRAM();
+
     JsonDocument json;
     json["success"] = success;
     json["message"] = success ? "Statistics reset successfully" : "Failed to reset statistics";
-    
+
     if (success) {
-        // Get current timestamp for display
-        uint16_t gap1, gap2, water;
-        uint32_t resetTime;
-        if (waterAlgorithm.getErrorStatistics(gap1, gap2, water, resetTime)) {
-            json["reset_timestamp"] = resetTime;
+        ErrorStats stats;
+        if (loadErrorStatsFromFRAM(stats)) {
+            json["reset_timestamp"] = stats.last_reset_timestamp;
         }
     }
-    
+
     String response;
     serializeJson(json, response);
     request->send(success ? 200 : 500, "application/json", response);
-    
+
     LOG_INFO("Statistics reset requested via web interface - success: %s", success ? "true" : "false");
 }
 
@@ -410,23 +406,20 @@ void handleGetStatistics(AsyncWebServerRequest* request) {
         request->send(401, "text/plain", "Unauthorized");
         return;
     }
-    
-    // Get current statistics
-    uint16_t gap1_sum, gap2_sum, water_sum;
-    uint32_t last_reset;
-    bool success = waterAlgorithm.getErrorStatistics(gap1_sum, gap2_sum, water_sum, last_reset);
-    
+
+    ErrorStats stats;
+    bool success = loadErrorStatsFromFRAM(stats);
+
     JsonDocument json;
     json["success"] = success;
-    
+
     if (success) {
-        json["gap1_fail_sum"] = gap1_sum;
-        json["gap2_fail_sum"] = gap2_sum; 
-        json["water_fail_sum"] = water_sum;
-        json["last_reset_timestamp"] = last_reset;
-        
-        // Convert timestamp to readable format
-        time_t resetTime = (time_t)last_reset;
+        json["gap1_fail_sum"] = stats.gap1_fail_sum;
+        json["gap2_fail_sum"] = stats.gap2_fail_sum;
+        json["water_fail_sum"] = stats.water_fail_sum;
+        json["last_reset_timestamp"] = stats.last_reset_timestamp;
+
+        time_t resetTime = (time_t)stats.last_reset_timestamp;
         struct tm* timeinfo = localtime(&resetTime);
         char timeStr[32];
         strftime(timeStr, sizeof(timeStr), "%d/%m/%Y %H:%M", timeinfo);
@@ -434,14 +427,14 @@ void handleGetStatistics(AsyncWebServerRequest* request) {
     } else {
         json["error"] = "Failed to load statistics";
     }
-    
+
     String response;
     serializeJson(json, response);
     request->send(success ? 200 : 500, "application/json", response);
 }
 
 // ========================================
-// DAILY VOLUME HANDLERS
+// ROLLING 24H VOLUME HANDLERS
 // ========================================
 
 void handleGetDailyVolume(AsyncWebServerRequest* request) {
@@ -450,54 +443,30 @@ void handleGetDailyVolume(AsyncWebServerRequest* request) {
         return;
     }
 
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"daily_volume\":" + String(waterAlgorithm.getDailyVolume()) + ",";
-    response += "\"max_volume\":" + String(waterAlgorithm.getFillWaterMax()) + ",";
-    response += "\"last_reset_utc_day\":" + String(waterAlgorithm.getLastResetUTCDay());
-    response += "}";
+    JsonDocument json;
+    json["success"] = true;
+    json["rolling_24h_ml"] = waterAlgorithm.getRolling24hVolume();
+    json["history_window_s"] = waterAlgorithm.getConfig().history_window_s;
+    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
 
+    String response;
+    serializeJson(json, response);
     request->send(200, "application/json", response);
 }
 
 void handleResetDailyVolume(AsyncWebServerRequest* request) {
-    // Check authentication
     if (!checkAuthentication(request)) {
-        LOG_WARNING("Unauthorized daily volume reset attempt from %s", resolveClientIP(request).toString().c_str());
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-    
-    // Check rate limiting
-    IPAddress clientIP = resolveClientIP(request);
-    if (isRateLimited(clientIP)) {
-        request->send(429, "application/json", "{\"success\":false,\"error\":\"Too many requests\"}");
-        return;
-    }
 
-    LOG_INFO("Daily volume reset requested from %s", clientIP.toString().c_str());
-    
-    // Perform reset
-    bool success = waterAlgorithm.resetDailyVolume();
-    
-    if (success) {
-        String response = "{";
-        response += "\"success\":true,";
-        response += "\"daily_volume\":" + String(waterAlgorithm.getDailyVolume()) + ",";
-        response += "\"last_reset_utc_day\":" + String(waterAlgorithm.getLastResetUTCDay());
-        response += "}";
-        
-        request->send(200, "application/json", response);
-        LOG_INFO("✅ Daily volume reset successful via web interface");
-    } else {
-        request->send(400, "application/json", 
-                     "{\"success\":false,\"error\":\"Cannot reset while pump is active\"}");
-        LOG_WARNING("⚠️ Daily volume reset blocked - pump is active");
-    }
+    // Rolling 24h window resets automatically — no manual reset supported
+    request->send(501, "application/json",
+        "{\"success\":false,\"error\":\"Not supported — rolling 24h window resets automatically\"}");
 }
 
 // ===============================
-// 🆕 NEW: AVAILABLE VOLUME HANDLERS
+// AVAILABLE VOLUME — not supported in new algorithm
 // ===============================
 
 void handleGetAvailableVolume(AsyncWebServerRequest* request) {
@@ -505,15 +474,8 @@ void handleGetAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"max_ml\":" + String(waterAlgorithm.getAvailableVolumeMax()) + ",";
-    response += "\"current_ml\":" + String(waterAlgorithm.getAvailableVolumeCurrent()) + ",";
-    response += "\"is_empty\":" + String(waterAlgorithm.isAvailableVolumeEmpty() ? "true" : "false");
-    response += "}";
-
-    request->send(200, "application/json", response);
+    request->send(501, "application/json",
+        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
 }
 
 void handleSetAvailableVolume(AsyncWebServerRequest* request) {
@@ -521,28 +483,8 @@ void handleSetAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-
-    if (!request->hasParam("value", true)) {
-        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing value parameter\"}");
-        return;
-    }
-    
-    int value = request->getParam("value", true)->value().toInt();
-    
-    if (value < 100 || value > 10000) {
-        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 100-10000 ml\"}");
-        return;
-    }
-    
-    waterAlgorithm.setAvailableVolume(value);
-    
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"max_ml\":" + String(waterAlgorithm.getAvailableVolumeMax()) + ",";
-    response += "\"current_ml\":" + String(waterAlgorithm.getAvailableVolumeCurrent());
-    response += "}";
-    
-    request->send(200, "application/json", response);
+    request->send(501, "application/json",
+        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
 }
 
 void handleRefillAvailableVolume(AsyncWebServerRequest* request) {
@@ -550,20 +492,12 @@ void handleRefillAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-
-    waterAlgorithm.refillAvailableVolume();
-    
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"max_ml\":" + String(waterAlgorithm.getAvailableVolumeMax()) + ",";
-    response += "\"current_ml\":" + String(waterAlgorithm.getAvailableVolumeCurrent());
-    response += "}";
-    
-    request->send(200, "application/json", response);
+    request->send(501, "application/json",
+        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
 }
 
 // ===============================
-// 🆕 NEW: FILL WATER MAX HANDLERS
+// MAX DOSE (per-cycle safety limit) HANDLERS
 // ===============================
 
 void handleGetFillWaterMax(AsyncWebServerRequest* request) {
@@ -572,11 +506,12 @@ void handleGetFillWaterMax(AsyncWebServerRequest* request) {
         return;
     }
 
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"fill_water_max\":" + String(waterAlgorithm.getFillWaterMax());
-    response += "}";
+    JsonDocument json;
+    json["success"] = true;
+    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
 
+    String response;
+    serializeJson(json, response);
     request->send(200, "application/json", response);
 }
 
@@ -590,26 +525,29 @@ void handleSetFillWaterMax(AsyncWebServerRequest* request) {
         request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing value parameter\"}");
         return;
     }
-    
+
     int value = request->getParam("value", true)->value().toInt();
-    
-    if (value < 100 || value > 10000) {
-        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 100-10000 ml\"}");
+
+    if (value < 50 || value > 2000) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 50-2000 ml\"}");
         return;
     }
-    
-    waterAlgorithm.setFillWaterMax(value);
 
-    String response = "{";
-    response += "\"success\":true,";
-    response += "\"fill_water_max\":" + String(waterAlgorithm.getFillWaterMax());
-    response += "}";
+    TopOffConfig cfg = waterAlgorithm.getConfig();
+    cfg.max_dose_ml = (uint16_t)value;
+    waterAlgorithm.setConfig(cfg);
 
+    JsonDocument json;
+    json["success"] = true;
+    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
+
+    String response;
+    serializeJson(json, response);
     request->send(200, "application/json", response);
 }
 
 // ===============================
-// CYCLE HISTORY HANDLER
+// TOP-OFF HISTORY HANDLER
 // ===============================
 
 extern volatile bool framBusy;
@@ -625,52 +563,30 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
         return;
     }
 
-    const std::vector<PumpCycle>& cycles = waterAlgorithm.getCycleHistory();
+    static TopOffRecord buf[TOPOFF_HISTORY_SIZE];
+    uint16_t count = loadTopOffHistory(buf, TOPOFF_HISTORY_SIZE);
 
     JsonDocument doc;
     doc["success"] = true;
-    doc["total"] = cycles.size();
+    doc["total"] = count;
 
     JsonArray arr = doc["cycles"].to<JsonArray>();
 
-    // Iterate newest-first (vector is ordered oldest-first from FRAM load)
-    for (int i = (int)cycles.size() - 1; i >= 0; i--) {
-        const PumpCycle& c = cycles[i];
+    // Iterate newest-first (ring buffer returns oldest-first)
+    for (int i = (int)count - 1; i >= 0; i--) {
+        const TopOffRecord& r = buf[i];
         JsonObject obj = arr.add<JsonObject>();
 
-        obj["ts"] = c.timestamp;
-        obj["gap1_s"] = c.time_gap_1;
-        obj["gap2_s"] = c.time_gap_2;
-        obj["wt_s"] = c.water_trigger_time;
-        obj["pump_s"] = c.pump_duration;
-        obj["attempts"] = c.pump_attempts;
-        obj["volume_ml"] = c.volume_dose;
-        obj["alarm"] = c.error_code;
-
-        // Decoded sensor flags
-        bool s1_deb_fail = c.sensor_results & PumpCycle::RESULT_SENSOR1_DEBOUNCE_FAIL;
-        bool s2_deb_fail = c.sensor_results & PumpCycle::RESULT_SENSOR2_DEBOUNCE_FAIL;
-
-        obj["s1_deb"] = !s1_deb_fail;
-        obj["s2_deb"] = !s2_deb_fail;
-        obj["deb_ok"] = !(c.sensor_results & PumpCycle::RESULT_FALSE_TRIGGER);
-
-        // Release: 1=OK, 0=N/A (nie sprawdzany), -1=FAIL
-        if (s1_deb_fail) {
-            obj["s1_rel"] = 0;
-        } else if (c.sensor_results & (PumpCycle::RESULT_SENSOR1_RELEASE_FAIL | PumpCycle::RESULT_WATER_FAIL)) {
-            obj["s1_rel"] = -1;
-        } else {
-            obj["s1_rel"] = 1;
-        }
-
-        if (s2_deb_fail) {
-            obj["s2_rel"] = 0;
-        } else if (c.sensor_results & (PumpCycle::RESULT_SENSOR2_RELEASE_FAIL | PumpCycle::RESULT_WATER_FAIL)) {
-            obj["s2_rel"] = -1;
-        } else {
-            obj["s2_rel"] = 1;
-        }
+        obj["ts"]           = r.timestamp;
+        obj["interval_s"]   = r.interval_s;
+        obj["volume_ml"]    = r.volume_ml;
+        obj["rate_ml_h"]    = r.rate_ml_h;
+        obj["dev_vol_pct"]  = r.dev_volume_pct;
+        obj["dev_rate_pct"] = r.dev_rate_pct;
+        obj["alert"]        = r.alert_level;
+        obj["manual"]       = (bool)(r.flags & TopOffRecord::FLAG_MANUAL);
+        obj["timeout"]      = (bool)(r.flags & TopOffRecord::FLAG_TIMEOUT);
+        obj["bootstrap"]    = (bool)(r.flags & TopOffRecord::FLAG_BOOTSTRAP);
     }
 
     String jsonResponse;
