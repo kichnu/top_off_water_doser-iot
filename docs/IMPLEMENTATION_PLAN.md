@@ -462,3 +462,73 @@ lib_deps =
   ├──────────────────┼────────┼────────────────┼──────────────────────────┤
   │ LEDC (hardware)  │ zerowy │ zero           │ odporny                  │
   └──────────────────┴────────┴────────────────┴──────────────────────────┘
+
+
+
+  ❯ EMA: vol=139.6 int=185s rate=8069.52 ml/h (bootstrap=10)                                                                                                                    
+[606717] [INFO] TopOffRecord saved: ts=1773259453 vol=113 ml (slot=9, total=12063)                                                                                            
+[606727] [INFO] EMA block saved: vol=139.6 int=185s rate=8069.52 bootstrap=10                                                                                                 
+[607384] [INFO] METRICS: dev_vol=-19% dev_rate=-89% alert=2 bootstrap=10/5 wyjaśnij mi poszczególne pozycje w kontekście apilikacji i algorytmu                               
+                                                                                                                                                                              
+● Wyjaśnienie logów                            
+                                                                                                                                                                              
+  EMA: vol=139.6 int=185s rate=8069.52 ml/h (bootstrap=10)                                                                                                                    
+                                                                                                                                                                              
+  To aktualny stan Exponential Moving Average — historyczny "wzorzec normalnego cyklu" przechowywany w FRAM:                                                                  
+                                                                                                                                                                              
+  ┌───────────────────┬───────────┬───────────────────────────────────────────────────────────────────────┐                                                                   
+  │       Pole        │  Wartość  │                              Co oznacza                               │                                                                 
+  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
+  │ vol=139.6 ml      │ 139.6 ml  │ Typowa objętość jednej dolewki (średnia ważona z minionych cykli)     │                                                                 
+  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
+  │ int=185s          │ 185 s     │ Typowy odstęp między dolewkami (~3 min)                               │                                                                   
+  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
+  │ rate=8069.52 ml/h │ 8069 ml/h │ Tempo ubytku wody = vol/interval×3600 — tu jest problem (patrz niżej) │                                                                   
+  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
+  │ bootstrap=10      │ 10/5      │ Zebrano 10 cykli, próg bootstrap (5) przekroczony → alerty aktywne    │                                                                 
+  └───────────────────┴───────────┴───────────────────────────────────────────────────────────────────────┘                                                                   
+                                                                                                                                                                            
+  ---                                                                                                                                                                         
+  TopOffRecord saved: ts=1773259453 vol=113 ml (slot=9, total=12063)                                                                                                        
+                                                                                                                                                                              
+  Rekord właśnie zakończonego cyklu zapisany do ring buffera FRAM:
+                                                                                                                                                                              
+  ┌───────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                                        
+  │     Pole      │                                                    Co oznacza                                                    │                                        
+  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
+  │ ts=1773259453 │ Unix timestamp UTC z DS3231 (2026-03-11 ~09:44)                                                                  │                                      
+  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ vol=113 ml    │ Objętość dolana w tym cyklu = czas_pompy × flow_rate_ml/s                                                        │                                        
+  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
+  │ slot=9        │ Pozycja w ring bufferze (0–59 slotów × 20 bajtów każdy)                                                          │                                        
+  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
+  │ total=12063   │ Łączna liczba rekordów zapisanych od początku istnienia FRAM (monotoniczny licznik, nie zeruje się po restarcie) │                                      
+  └───────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                                        
+                                                                                                                                                                            
+  ---                                                                                                                                                                         
+  METRICS: dev_vol=-19% dev_rate=-89% alert=2 bootstrap=10/5                                                                                                                
+                                                                                                                                                                              
+  Porównanie tego cyklu z historyczną EMA:
+                                                                                                                                                                              
+  ┌────────────────┬────────────────────────────────────────┬─────────────────────────────────────────────────────────────┐                                                   
+  │      Pole      │               Obliczenie               │                        Interpretacja                        │                                                   
+  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
+  │ dev_vol=-19%   │ (113 - 139.6) / 139.6 = -19%           │ Ten cykl dolał o 19% mniej niż zwykle — mieści się w normie │                                                 
+  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
+  │ dev_rate=-89%  │ (rate_tego_cyklu - 8069) / 8069 = -89% │ Tempo zużycia wody w tym cyklu drastycznie niższe niż EMA   │                                                   
+  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
+  │ alert=2        │ próg rate_red_pct=80% przekroczony     │ 🔴 RED — tempo odbiega o >80% od normy                      │                                                   
+  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
+  │ bootstrap=10/5 │ 10 zebranych, próg=5                   │ Alerty aktywne (>5), EMA coraz dokładniejsze                │                                                 
+  └────────────────┴────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘                                                   
+                                                                                                                                                                            
+  ---                                                                                                                                                                         
+  Problem z rate=8069 ml/h                                                                                                                                                  
+                                                                                                                                                                              
+  To wartość nierealistyczna dla systemu akwarystycznego — 8 litrów/godz. to parowanie szybsze niż w basenie. Przyczyna: EMA rate jest silnie zaburzona przez wczesne cykle
+  gdy:                                                                                                                                                                        
+  - interwał między dolewkami był bardzo krótki (np. tuż po starcie systemu RTC nie miał jeszcze czasu UTC)                                                                 
+  - lub ts=0 (brak synchronizacji RTC) dawał intervalS=0 → rate=0, albo odwrotnie — timestamp skoczył nagle po synchronizacji NTP dając ogromny iloczyn                       
+                                                                                                                                                                            
+  Co zrobić: EMA "zapomni" tę anomalię po kolejnych normalnych cyklach (alpha=0.20, po ~15 cyklach wpływ wczesnych błędów spada do ~4%). Możesz też zresetować EMA przez zapis
+   domyślnej struktury do FRAM lub dodać endpoint API do resetu EMA.  
