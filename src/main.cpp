@@ -1,5 +1,6 @@
 
 #include <Arduino.h>
+#include <Wire.h>
 #include "core/logging.h"
 #include "config/config.h"
 #include "config/credentials_manager.h"
@@ -39,7 +40,10 @@ void setup() {
         LOG_INFO("    ENTERING PROVISIONING MODE");
         LOG_INFO("====================================");
         LOG_INFO("Initializing FRAM for credential storage");
-     
+
+        Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+        Wire.setClock(100000);
+
         if (!initFRAM()) {
             LOG_INFO("WARNING: FRAM initialization failed!");
             LOG_INFO("Credentials may not be saved properly");
@@ -93,6 +97,9 @@ void setup() {
 
     initWaterSensor();
     initPumpController();
+
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);  // Init I2C before FRAM
+    Wire.setClock(100000);
 
     initNVS();          // initNVS() wywołuje initFRAM() wewnętrznie (config.cpp)
     loadVolumeFromNVS();

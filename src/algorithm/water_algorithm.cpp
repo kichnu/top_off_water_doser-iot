@@ -555,6 +555,12 @@ void WaterAlgorithm::checkResetButton() {
         if (currentState == STATE_ERROR) {
             LOG_INFO("Reset button — clearing error state");
             resetFromError();
+        } else if (errorSignalActive) {
+            // ERROR_TIMEOUT: alarm aktywny, ale system działa dalej (nie w STATE_ERROR)
+            errorSignalActive = false;
+            lastError         = ERROR_NONE;
+            digitalWrite(ERROR_SIGNAL_PIN, LOW);
+            LOG_INFO("Reset button — alarm cleared (timeout warning acknowledged)");
         }
     }
 }

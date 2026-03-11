@@ -20,24 +20,27 @@
 // ============================================================
 
 // ============== TOP-OFF SYSTEM ==============
-#define PUMP_RELAY_PIN      10  // Pompa top-off (HIGH = ON)
-#define WATER_SENSOR_PIN     3  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
+#define ATO_PUMP_RELAY_PIN          21  // Pompa top-off (LOW = ON, active-LOW relay) [D6]
+#define WATER_SENSOR_PIN             9  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
 
-// ============== DOSER SYSTEM (2 kanały) ==============
-#define DOSE_RELAY_PIN_CH1   5  // Pompa dozująca A (HIGH = ON)
-#define DOSE_RELAY_PIN_CH2   9  // Pompa dozująca B (HIGH = ON)
+// ============== KALKWASSER SYSTEM (2 + 1 kanał) ==============
+#define PERYSTALTIC_PUMP_DRIVER_PIN   10  // Pompa dozująca A (HIGH = ON)
+#define MIXING_PUMP_RELAY_PIN        3  // Pompa dozująca A (HIGH = ON)
+#define RESERVE_PUMP_RELAY_PIN       4  // Pompa dozująca A (HIGH = ON)
+
 
 // ============== I2C (DS3231 RTC + FRAM MB85RC256V) ==============
 #define I2C_SDA_PIN          6
 #define I2C_SCL_PIN          7
 
 // ============== SYSTEM ==============
-#define ERROR_SIGNAL_PIN     2  // Sygnalizacja błędów — buzzer/LED (HIGH = aktywny)
-#define RESET_PIN            8  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
+#define ERROR_SIGNAL_PIN     8  // Sygnalizacja błędów — buzzer/LED (HIGH = aktywny)
+#define RESET_PIN            5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
 
 // ============== WOLNE (rezerwa) ==============
+// GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)
 // GPIO 4  — zwolniony po usunięciu drugiego czujnika
-// GPIO 20 — UART RX (unikać — debug serial)
-// GPIO 21 — UART TX (unikać — debug serial)
+// GPIO 20 — UART0 RX (Serial = USB CDC na XIAO, GPIO20 fizycznie wolny)
+// GPIO 21 — zajęty: ATO_PUMP_RELAY_PIN [D6]
 
 #endif // HARDWARE_PINS_H

@@ -415,3 +415,50 @@ lib_deps =
     RTClib ^2.1.1 (Adafruit)
     Adafruit FRAM I2C
 ```
+
+
+
+
+
+
+
+
+
+
+
+  Algorytm harmonogramu (RTC)
+
+  Inicjalizacja:
+    ledc_setup(freq, resolution)  ← częstotliwość = docelowe RPM, raz na starcie
+    ledc_write(duty=0)            ← silnik zatrzymany
+    EN = HIGH                     ← TMC2209 w trybie sleep
+
+  Harmonogram (callback co np. 1h lub na żądanie):
+    ┌─ oblicz ml_do_dozowania (na podstawie czujnika/harmonogramu)
+    ├─ przelicz czas_pracy = ml / przepływ_ml_per_s
+    ├─ EN = LOW              ← wybudź sterownik
+    ├─ delay 1ms             ← czas na inicjalizację TMC2209
+    ├─ ledc_write(duty=127)  ← START: LEDC generuje STEP automatycznie
+    ├─ odpal timer (one-shot, czas_pracy sekund)
+    └─ wróć do loop() [loop nic nie robi dla silnika!]
+
+  Callback timera (po czas_pracy):
+    ├─ ledc_write(duty=0)    ← STOP: brak pulsów
+    ├─ delay 1ms
+    ├─ EN = HIGH             ← TMC2209 sleep
+    └─ zapisz log (RTC timestamp, ml, status)
+
+  Pętla główna nie zawiera żadnego kodu silnika — tylko esp_timer (one-shot) i LEDC.
+
+  ---
+  Dlaczego nie millis()/micros() + loop()
+
+  ┌──────────────────┬────────┬────────────────┬──────────────────────────┐
+  │      Metoda      │ Jitter │ Obciążenie CPU │      Problem z WiFi      │
+  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
+  │ micros() w loop  │ duży   │ stały polling  │ kroки tracone podczas TX │
+  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
+  │ Timer przerwanie │ mały   │ minimalne ISR  │ OK                       │
+  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
+  │ LEDC (hardware)  │ zerowy │ zero           │ odporny                  │
+  └──────────────────┴────────┴────────────────┴──────────────────────────┘

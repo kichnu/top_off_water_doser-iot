@@ -22,8 +22,8 @@ static bool directPumpMode = false;
 
 void initPumpController() {
 
-    pinMode(PUMP_RELAY_PIN, OUTPUT);
-    digitalWrite(PUMP_RELAY_PIN, HIGH);
+    pinMode(ATO_PUMP_RELAY_PIN, OUTPUT);
+    digitalWrite(ATO_PUMP_RELAY_PIN, HIGH);
     
     pumpRunning = false;
     LOG_INFO("");
@@ -31,10 +31,14 @@ void initPumpController() {
 }
 
 void updatePumpController() {
+    // Re-assert pin ownership every cycle — ESP32-C3 WiFi/ADC may reclaim GPIO2 (A0) via periman
+    if (pumpRunning) {
+        pinMode(ATO_PUMP_RELAY_PIN, OUTPUT);
+    }
 
         // Check global pump state - stop if disabled (but not in direct mode)
     if (!pumpGlobalEnabled && pumpRunning && !directPumpMode) {
-        digitalWrite(PUMP_RELAY_PIN, HIGH);
+        digitalWrite(ATO_PUMP_RELAY_PIN, HIGH);
         pumpRunning = false;
         LOG_INFO("");
         LOG_INFO("Pump stopped - globally disabled");
@@ -43,7 +47,7 @@ void updatePumpController() {
 
     if (pumpRunning && (millis() - pumpStartTime >= pumpDuration)) {
         // Stop pump and log event
-        digitalWrite(PUMP_RELAY_PIN, HIGH);
+        digitalWrite(ATO_PUMP_RELAY_PIN, HIGH);
         pumpRunning = false;
 
         uint16_t actualDuration = (millis() - pumpStartTime) / 1000;
@@ -106,7 +110,7 @@ bool triggerPump(uint16_t durationSeconds, const String& actionType) {
     }
     // Dla AUTO_PUMP nie wywołuj requestManualPump!
     
-    digitalWrite(PUMP_RELAY_PIN, LOW);
+    digitalWrite(ATO_PUMP_RELAY_PIN, LOW);
     pumpRunning = true;
     pumpStartTime = millis();
     pumpDuration = durationSeconds * 1000UL;
@@ -132,7 +136,7 @@ uint32_t getPumpRemainingTime() {
 
 void stopPump() {
     if (pumpRunning) {
-        digitalWrite(PUMP_RELAY_PIN, HIGH);
+        digitalWrite(ATO_PUMP_RELAY_PIN, HIGH);
         pumpRunning = false;
 
         // Calculate actual duration and volume
@@ -170,7 +174,7 @@ bool directPumpOn(uint16_t durationSeconds) {
     }
 
     directPumpMode = true;
-    digitalWrite(PUMP_RELAY_PIN, LOW);
+    digitalWrite(ATO_PUMP_RELAY_PIN, LOW);
     pumpRunning = true;
     pumpStartTime = millis();
     pumpDuration = durationSeconds * 1000UL;
@@ -186,7 +190,7 @@ void directPumpOff() {
         return;
     }
 
-    digitalWrite(PUMP_RELAY_PIN, HIGH);
+    digitalWrite(ATO_PUMP_RELAY_PIN, HIGH);
     pumpRunning = false;
     directPumpMode = false;
     currentActionType = "";

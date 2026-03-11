@@ -8,12 +8,12 @@
 // ===============================
 
 // Button Configuration
-#define PROV_BUTTON_PIN         8       // GPIO8 (same as RESET_PIN)
+#define PROV_BUTTON_PIN         5       // GPIO5 (same as RESET_PIN)
 #define PROV_BUTTON_HOLD_MS     5000    // Hold time to enter provisioning (5 seconds)
 #define PROV_BUTTON_DEBOUNCE_MS 100     // Debounce time
 
 // Audio/Visual feedback during button hold
-#define PROV_FEEDBACK_PIN       2       // ERROR_SIGNAL_PIN for beep feedback
+#define PROV_FEEDBACK_PIN       8       // ERROR_SIGNAL_PIN (GPIO8) for beep feedback
 #define PROV_BEEP_HIGH_MS       10      // High state duration
 #define PROV_BEEP_LOW_MS        100     // Low state duration
 #define PROV_HOLD_MARGIN_MS     500     // Extra time margin for feedback
