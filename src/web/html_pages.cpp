@@ -509,6 +509,13 @@ const char* DASHBOARD_HTML = R"rawliteral(
             display: flex;
             flex-direction: column;
             justify-content: center;
+            grid-column: span 2;
+        }
+
+        @media (max-width: 600px) {
+            .status-message {
+                grid-column: span 1;
+            }
         }
 
         .status-message .main {
@@ -638,14 +645,23 @@ const char* DASHBOARD_HTML = R"rawliteral(
         /* ===== THIRD CARD: Statistics ===== */
         .stats-columns {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             align-items: start;
+        }
+
+        /* Single Dose: pierwsza kolumna na desktopie (ostatnia w HTML → order:-1) */
+        .stat-col-dose {
+            order: -1;
         }
 
         @media (max-width: 600px) {
             .stats-columns {
                 grid-template-columns: 1fr;
+            }
+            /* Na mobile Single Dose wraca na koniec */
+            .stat-col-dose {
+                order: 3;
             }
         }
 
@@ -873,15 +889,15 @@ const char* DASHBOARD_HTML = R"rawliteral(
             </div>
 
             <div class="status-grid">
-                <!-- Row 1: sensor1, sensor2, pump -->
+                <!-- Row 1: sensors, system, pump -->
                 <div class="status-row">
                     <div class="status-badge off" id="sensor1Badge">
-                        <span class="label">Sensor 1</span>
+                        <span class="label">SENSORS</span>
                         <span class="value">OFF</span>
                     </div>
-                    <div class="status-badge off" id="sensor2Badge">
-                        <span class="label">Sensor 2</span>
-                        <span class="value">OFF</span>
+                    <div class="status-badge ok" id="systemBadge">
+                        <span class="label">System</span>
+                        <span class="value">OK</span>
                     </div>
                     <div class="status-badge idle" id="pumpBadge">
                         <span class="label">Pump</span>
@@ -889,12 +905,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                 </div>
 
-                <!-- Row 2: system, status-message, wifi status -->
+                <!-- Row 2: status-message, wifi status -->
                 <div class="status-row">
-                    <div class="status-badge ok" id="systemBadge">
-                        <span class="label">System</span>
-                        <span class="value">OK</span>
-                    </div>
                     <div class="status-message">
                         <div class="main" id="processDescription">IDLE - Waiting for sensors</div>
                         <div class="sub" id="processTime">—</div>
@@ -958,28 +970,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
  
 
             <div class="stats-columns">
-                
-                <!-- Column 1: Available Volume -->
-                <div class="stat-column">
-                    <h3>Available Water</h3>
-                    <div class="stat-content">
-                        <div class="volume-indicator">
-                            <div class="volume-bar">
-                                <div class="volume-bar-fill" id="availableBarFill"></div>
-                            </div>
-                            <div class="volume-text" id="availableText">0 ml / 10000 ml</div>
-                        </div>
-                    </div>
-                    <div class="input-group" style="margin-top: 8px;">
-                        <input type="number" id="availableVolumeInput" min="100" max="10000" step="100" placeholder="ml">
-                    </div>
-                    <div class="stat-available">
-                        <button class="btn btn-secondary btn-small" onclick="setAvailableVolume()">Set</button>
-                        <button class="btn btn-secondary btn-small" onclick="refillAvailableVolume()">Refill</button>
-                    </div>
-                </div>
 
-                <!-- Column 2: Daily Volume -->
+                <!-- Column 1: Daily Refill Limit -->
                 <div class="stat-column">
                     <h3>Daily Refill Limit</h3>
                     <div class="stat-content">
@@ -995,7 +987,44 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                     <div class="stat-daily">
                         <button class="btn btn-secondary btn-small" onclick="setDailyLimit()">Set</button>
-                        <button id="resetDailyVolumeBtn" class="btn btn-secondary btn-small" onclick="resetDailyVolume()">Reset</button>
+                    </div>
+                </div>
+
+                <!-- Column 2: Available Water (remaining today = daily_limit - rolling_24h) -->
+                <div class="stat-column">
+                    <h3>Available Water</h3>
+                    <div class="stat-content">
+                        <div class="volume-indicator">
+                            <div class="volume-bar">
+                                <div class="volume-bar-fill" id="availableBarFill"></div>
+                            </div>
+                            <div class="volume-text" id="availableText">— ml remaining</div>
+                        </div>
+                    </div>
+                    <div class="input-group" style="margin-top: 8px;">
+                        <input type="number" id="availableLimitInput" min="100" max="20000" step="100" placeholder="reservoir ml">
+                    </div>
+                    <div class="stat-available">
+                        <button class="btn btn-secondary btn-small" onclick="setAvailableVolume()">Set / Refill</button>
+                    </div>
+                </div>
+
+                <!-- Column 3: Single Dose — ostatnia w HTML, pierwsza na desktopie (order:-1) -->
+                <div class="stat-column stat-col-dose">
+                    <h3>Single Dose</h3>
+                    <div class="stat-content">
+                        <div class="volume-indicator">
+                            <div class="volume-bar">
+                                <div class="volume-bar-fill" id="doseBarFill"></div>
+                            </div>
+                            <div class="volume-text" id="doseText">— ml</div>
+                        </div>
+                    </div>
+                    <div class="input-group" style="margin-top: 8px;">
+                        <input type="number" id="doseInput" min="50" max="2000" step="10" placeholder="ml">
+                    </div>
+                    <div class="stat-daily">
+                        <button class="btn btn-secondary btn-small" onclick="setDose()">Set</button>
                     </div>
                 </div>
             </div>
@@ -1162,18 +1191,21 @@ const char* DASHBOARD_HTML = R"rawliteral(
             const btn = document.getElementById("systemToggleBtn");
             btn.disabled = true;
 
-            fetch("api/system-toggle", { method: "POST" })
-                .then((response) => response.json())
+            secureFetch("api/system-toggle", { method: "POST" })
+                .then((response) => {
+                    if (!response) { btn.disabled = false; return; }
+                    return response.json();
+                })
                 .then((data) => {
+                    if (!data) return;
                     if (data.success) {
                         systemEnabled = data.enabled;
                         updateSystemToggleButton(data.enabled);
                     }
+                    btn.disabled = false;
                 })
                 .catch((error) => {
                     console.error("Toggle system error:", error);
-                })
-                .finally(() => {
                     btn.disabled = false;
                 });
         }
@@ -1525,153 +1557,129 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
 
         // ============================================
-        // DAILY VOLUME FUNCTIONS
+        // DAILY VOLUME + AVAILABLE WATER + DOSE DISPLAY
+        // Wszystkie dane z jednego endpointu: api/daily-volume
         // ============================================
         function loadDailyVolume() {
             secureFetch("api/daily-volume")
-                .then((response) => {
-                    if (!response) return null;
-                    return response.json();
-                })
+                .then((r) => { if (!r) return null; return r.json(); })
                 .then((data) => {
-                    if (!data) return;
-                    if (data.success) {
-                        const current = data.daily_volume;
-                        maxDailyVolume = data.max_volume;
-                        const percent = Math.min((current / maxDailyVolume) * 100, 100);
-                        
-                        document.getElementById("volumeBarFill").style.width = percent + "%";
-                        document.getElementById("volumeText").textContent = current + " ml / " + maxDailyVolume + " ml";
-                    }
+                    if (!data || !data.success) return;
+
+                    const rolling  = data.rolling_24h_ml;
+                    const limit    = data.daily_limit_ml;
+                    const dose     = data.dose_ml;
+
+                    // Daily Refill Limit bar
+                    const pctUsed = limit > 0 ? Math.min((rolling / limit) * 100, 100) : 0;
+                    document.getElementById("volumeBarFill").style.width = pctUsed + "%";
+                    document.getElementById("volumeText").textContent = rolling + " ml / " + limit + " ml";
+
+                    // Single Dose bar (dose jako % max 2000 ml)
+                    const pctDose = Math.min((dose / 2000) * 100, 100);
+                    document.getElementById("doseBarFill").style.width = pctDose + "%";
+                    document.getElementById("doseText").textContent = dose + " ml / cycle";
                 })
-                .catch((error) => {
-                    console.error("Failed to load daily volume:", error);
-                });
-        }
-
-        function resetDailyVolume() {
-            const btn = document.getElementById("resetDailyVolumeBtn");
-            btn.disabled = true;
-            btn.textContent = "Resetting...";
-
-            fetch("api/reset-daily-volume", { method: "POST" })
-                .then((response) => response.json())
-                .then((data) => {
-                    if (data.success) {
-                        loadDailyVolume();
-                    } else {
-                        console.error("Daily volume reset failed:", data.error);
-                    }
-                })
-                .catch((e) => console.error("Daily volume reset error:", e))
-                .finally(() => {
-                    btn.disabled = false;
-                    btn.textContent = "Reset Daily Volume";
-                });
-        }
-
-
-        // ============================================
-        // AVAILABLE VOLUME FUNCTIONS
-        // ============================================
-        function loadAvailableVolume() {
-            secureFetch("api/available-volume")
-                .then((response) => {
-                    if (!response) return null;
-                    return response.json();
-                })
-                .then((data) => {
-                    if (!data) return;
-                    if (data.success) {
-                        const current = data.current_ml;
-                        const max = data.max_ml;
-                        const percent = Math.min((current / max) * 100, 100);
-                        
-                        const barFill = document.getElementById("availableBarFill");
-                        const text = document.getElementById("availableText");
-                        
-                        barFill.style.width = percent + "%";
-                        text.textContent = current + " ml / " + max + " ml";
-                        
-                        // Red color when empty
-                        if (current === 0) {
-                            text.style.color = "var(--accent-red)";
-                            barFill.style.background = "var(--accent-red)";
-                        } else {
-                            text.style.color = "";
-                            barFill.style.background = "";
-                        }
-                    }
-                })
-                .catch((error) => {
-                    console.error("Failed to load available volume:", error);
-                });
-        }
-
-        function setAvailableVolume() {
-            const input = document.getElementById("availableVolumeInput");
-            const value = parseInt(input.value);
-            
-            if (isNaN(value) || value < 100 || value > 10000) {
-                return;
-            }
-
-            fetch("api/set-available-volume", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: "value=" + value
-            })
-                .then((response) => response.json())
-                .then((data) => {
-                    if (data.success) {
-                        input.value = "";
-                        loadAvailableVolume();
-                    } else {
-                        console.error("Set available volume failed:", data.error);
-                    }
-                })
-                .catch((e) => console.error("Set available volume error:", e));
-        }
-
-        function refillAvailableVolume() {
-            fetch("api/refill-available-volume", { method: "POST" })
-                .then((response) => response.json())
-                .then((data) => {
-                    if (data.success) {
-                        loadAvailableVolume();
-                    } else {
-                        console.error("Refill available volume failed:", data.error);
-                    }
-                })
-                .catch((e) => console.error("Refill available volume error:", e));
+                .catch((e) => console.error("loadDailyVolume error:", e));
         }
 
         // ============================================
-        // SET DAILY LIMIT FUNCTION
+        // SET DAILY LIMIT
         // ============================================
         function setDailyLimit() {
             const input = document.getElementById("dailyLimitInput");
             const value = parseInt(input.value);
+            if (isNaN(value) || value < 100 || value > 10000) return;
+            if (!confirm("Set daily refill limit to " + value + " ml?")) return;
 
-            if (isNaN(value) || value < 100 || value > 10000) {
-                return;
-            }
-
-            fetch("api/set-fill-water-max", {
+            secureFetch("api/set-fill-water-max", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: "value=" + value
             })
-                .then((response) => response.json())
+                .then((r) => { if (!r) return null; return r.json(); })
                 .then((data) => {
-                    if (data.success) {
-                        input.value = "";
-                        loadDailyVolume();
-                    } else {
-                        console.error("Set daily limit failed:", data.error);
-                    }
+                    if (!data) return;
+                    if (data.success) { input.value = ""; loadDailyVolume(); }
+                    else console.error("Set daily limit failed:", data.error);
                 })
                 .catch((e) => console.error("Set daily limit error:", e));
+        }
+
+        // ============================================
+        // AVAILABLE VOLUME (physical reservoir)
+        // ============================================
+        function loadAvailableVolume() {
+            secureFetch("api/available-volume")
+                .then((r) => { if (!r) return null; return r.json(); })
+                .then((data) => {
+                    if (!data || !data.success) return;
+                    const avail = data.available_ml;
+                    const max   = data.available_max_ml;
+                    const avBar  = document.getElementById("availableBarFill");
+                    const avText = document.getElementById("availableText");
+                    if (max === 0) {
+                        avBar.style.width = "0%";
+                        avBar.style.background = "";
+                        avText.textContent = "not set";
+                        avText.style.color = "";
+                    } else {
+                        const pct = Math.min((avail / max) * 100, 100);
+                        avBar.style.width = pct + "%";
+                        avText.textContent = avail + " / " + max + " ml";
+                        if (avail === 0) {
+                            avText.style.color = "var(--accent-red)";
+                            avBar.style.background = "var(--accent-red)";
+                        } else {
+                            avText.style.color = "";
+                            avBar.style.background = "";
+                        }
+                    }
+                })
+                .catch((e) => console.error("loadAvailableVolume error:", e));
+        }
+
+        function setAvailableVolume() {
+            const input = document.getElementById("availableLimitInput");
+            const value = parseInt(input.value);
+            if (isNaN(value) || value < 100 || value > 20000) return;
+            if (!confirm("Set reservoir volume to " + value + " ml?")) return;
+
+            secureFetch("api/set-available-volume", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "value=" + value
+            })
+                .then((r) => { if (!r) return null; return r.json(); })
+                .then((data) => {
+                    if (!data) return;
+                    if (data.success) { input.value = ""; loadAvailableVolume(); }
+                    else console.error("Set available volume failed:", data.error);
+                })
+                .catch((e) => console.error("Set available volume error:", e));
+        }
+
+        // ============================================
+        // SET SINGLE DOSE
+        // ============================================
+        function setDose() {
+            const input = document.getElementById("doseInput");
+            const value = parseInt(input.value);
+            if (isNaN(value) || value < 50 || value > 2000) return;
+            if (!confirm("Set single dose to " + value + " ml?")) return;
+
+            secureFetch("api/set-dose", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "value=" + value
+            })
+                .then((r) => { if (!r) return null; return r.json(); })
+                .then((data) => {
+                    if (!data) return;
+                    if (data.success) { input.value = ""; loadDailyVolume(); }
+                    else console.error("Set dose failed:", data.error);
+                })
+                .catch((e) => console.error("Set dose error:", e));
         }
 
         // ============================================
@@ -1750,7 +1758,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         pollingIntervals.push(setInterval(updateStatus, 2000));
         pollingIntervals.push(setInterval(loadSystemState, 30000));
         pollingIntervals.push(setInterval(loadDailyVolume, 10000));
-        pollingIntervals.push(setInterval(loadAvailableVolume, 10000));
+        pollingIntervals.push(setInterval(loadAvailableVolume, 30000));
 
         // Initial loads
         updateStatus();

@@ -169,6 +169,8 @@ bool saveTopOffRecord(const TopOffRecord& record);
 uint16_t loadTopOffHistory(TopOffRecord* buf, uint16_t maxCount);
 bool loadLastTopOffRecord(TopOffRecord& record);
 uint16_t getTopOffRecordCount();
+bool clearTopOffRingBuffer();      // Czyści ring buffer i EMA
+bool isTopOffRingBufferValid();    // false gdy count > TOPOFF_HISTORY_SIZE (legacy/corrupt data)
 
 // EMA block
 bool saveEmaBlockToFRAM(const EmaBlock& ema);

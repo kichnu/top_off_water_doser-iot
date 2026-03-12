@@ -447,7 +447,8 @@ void handleGetDailyVolume(AsyncWebServerRequest* request) {
     json["success"] = true;
     json["rolling_24h_ml"] = waterAlgorithm.getRolling24hVolume();
     json["history_window_s"] = waterAlgorithm.getConfig().history_window_s;
-    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
+    json["dose_ml"]       = waterAlgorithm.getConfig().dose_ml;
+    json["daily_limit_ml"] = waterAlgorithm.getConfig().daily_limit_ml;
 
     String response;
     serializeJson(json, response);
@@ -466,7 +467,7 @@ void handleResetDailyVolume(AsyncWebServerRequest* request) {
 }
 
 // ===============================
-// AVAILABLE VOLUME — not supported in new algorithm
+// AVAILABLE VOLUME — physical water remaining in reservoir
 // ===============================
 
 void handleGetAvailableVolume(AsyncWebServerRequest* request) {
@@ -474,8 +475,14 @@ void handleGetAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-    request->send(501, "application/json",
-        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
+    JsonDocument json;
+    json["success"]           = true;
+    json["available_ml"]      = waterAlgorithm.getConfig().available_ml;
+    json["available_max_ml"]  = waterAlgorithm.getConfig().available_max_ml;
+
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
 }
 
 void handleSetAvailableVolume(AsyncWebServerRequest* request) {
@@ -483,8 +490,28 @@ void handleSetAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-    request->send(501, "application/json",
-        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
+    if (!request->hasParam("value", true)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing value parameter\"}");
+        return;
+    }
+    int value = request->getParam("value", true)->value().toInt();
+    if (value < 100 || value > 20000) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 100-20000 ml\"}");
+        return;
+    }
+    TopOffConfig cfg = waterAlgorithm.getConfig();
+    cfg.available_ml     = (uint16_t)value;
+    cfg.available_max_ml = (uint16_t)value;
+    waterAlgorithm.setConfig(cfg);
+
+    JsonDocument json;
+    json["success"]          = true;
+    json["available_ml"]     = cfg.available_ml;
+    json["available_max_ml"] = cfg.available_max_ml;
+
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
 }
 
 void handleRefillAvailableVolume(AsyncWebServerRequest* request) {
@@ -492,8 +519,23 @@ void handleRefillAvailableVolume(AsyncWebServerRequest* request) {
         request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
         return;
     }
-    request->send(501, "application/json",
-        "{\"success\":false,\"error\":\"Not supported in current firmware\"}");
+    // Refill: reset available_ml back to available_max_ml
+    TopOffConfig cfg = waterAlgorithm.getConfig();
+    if (cfg.available_max_ml == 0) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Available volume not configured\"}");
+        return;
+    }
+    cfg.available_ml = cfg.available_max_ml;
+    waterAlgorithm.setConfig(cfg);
+
+    JsonDocument json;
+    json["success"]          = true;
+    json["available_ml"]     = cfg.available_ml;
+    json["available_max_ml"] = cfg.available_max_ml;
+
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
 }
 
 // ===============================
@@ -507,8 +549,9 @@ void handleGetFillWaterMax(AsyncWebServerRequest* request) {
     }
 
     JsonDocument json;
-    json["success"] = true;
-    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
+    json["success"]       = true;
+    json["dose_ml"]       = waterAlgorithm.getConfig().dose_ml;
+    json["daily_limit_ml"] = waterAlgorithm.getConfig().daily_limit_ml;
 
     String response;
     serializeJson(json, response);
@@ -528,18 +571,49 @@ void handleSetFillWaterMax(AsyncWebServerRequest* request) {
 
     int value = request->getParam("value", true)->value().toInt();
 
+    if (value < 100 || value > 10000) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 100-10000 ml\"}");
+        return;
+    }
+
+    TopOffConfig cfg = waterAlgorithm.getConfig();
+    cfg.daily_limit_ml = (uint16_t)value;
+    waterAlgorithm.setConfig(cfg);
+
+    JsonDocument json;
+    json["success"]        = true;
+    json["daily_limit_ml"] = waterAlgorithm.getConfig().daily_limit_ml;
+
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
+}
+
+void handleSetDose(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "application/json", "{\"success\":false,\"error\":\"Unauthorized\"}");
+        return;
+    }
+
+    if (!request->hasParam("value", true)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing value parameter\"}");
+        return;
+    }
+
+    int value = request->getParam("value", true)->value().toInt();
+
     if (value < 50 || value > 2000) {
         request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 50-2000 ml\"}");
         return;
     }
 
     TopOffConfig cfg = waterAlgorithm.getConfig();
-    cfg.max_dose_ml = (uint16_t)value;
+    cfg.dose_ml = (uint16_t)value;
     waterAlgorithm.setConfig(cfg);
 
     JsonDocument json;
     json["success"] = true;
-    json["max_dose_ml"] = waterAlgorithm.getConfig().max_dose_ml;
+    json["dose_ml"] = waterAlgorithm.getConfig().dose_ml;
 
     String response;
     serializeJson(json, response);
@@ -579,14 +653,15 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
 
         obj["ts"]           = r.timestamp;
         obj["interval_s"]   = r.interval_s;
-        obj["volume_ml"]    = r.volume_ml;
         obj["rate_ml_h"]    = r.rate_ml_h;
-        obj["dev_vol_pct"]  = r.dev_volume_pct;
-        obj["dev_rate_pct"] = r.dev_rate_pct;
+        obj["dev_sigma"]    = r.dev_rate_sigma;
         obj["alert"]        = r.alert_level;
+        obj["hour"]         = r.hour_of_day;
+        obj["cycle"]        = r.cycle_num;
         obj["manual"]       = (bool)(r.flags & TopOffRecord::FLAG_MANUAL);
-        obj["timeout"]      = (bool)(r.flags & TopOffRecord::FLAG_TIMEOUT);
         obj["bootstrap"]    = (bool)(r.flags & TopOffRecord::FLAG_BOOTSTRAP);
+        obj["daily_lim"]    = (bool)(r.flags & TopOffRecord::FLAG_DAILY_LIM);
+        obj["red_alert"]    = (bool)(r.flags & TopOffRecord::FLAG_RED_ALERT);
     }
 
     String jsonResponse;

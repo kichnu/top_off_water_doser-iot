@@ -43,9 +43,10 @@ void initWebServer() {
     server.on("/api/set-available-volume", HTTP_POST, handleSetAvailableVolume);
     server.on("/api/refill-available-volume", HTTP_POST, handleRefillAvailableVolume);
     
-    // 🆕 NEW: Fill Water Max endpoints
+    // 🆕 NEW: Fill Water Max / Dose endpoints
     server.on("/api/fill-water-max", HTTP_GET, handleGetFillWaterMax);
-    server.on("/api/set-fill-water-max", HTTP_POST, handleSetFillWaterMax);
+    server.on("/api/set-fill-water-max", HTTP_POST, handleSetFillWaterMax);  // daily_limit_ml
+    server.on("/api/set-dose", HTTP_POST, handleSetDose);                    // dose_ml
 
     // Cycle History endpoint
     server.on("/api/cycle-history", HTTP_GET, handleGetCycleHistory);

@@ -906,8 +906,8 @@ bool saveTopOffRecord(const TopOffRecord& record) {
     fram.write(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&wptr,  2);
     fram.write(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
 
-    LOG_INFO("TopOffRecord saved: ts=%lu vol=%d ml (slot=%d, total=%d)",
-             record.timestamp, record.volume_ml, (wptr - 1 + TOPOFF_HISTORY_SIZE) % TOPOFF_HISTORY_SIZE, count);
+    LOG_INFO("TopOffRecord saved: ts=%lu cycle=%d (slot=%d, total=%d)",
+             record.timestamp, record.cycle_num, (wptr - 1 + TOPOFF_HISTORY_SIZE) % TOPOFF_HISTORY_SIZE, count);
     return true;
 }
 
@@ -959,6 +959,24 @@ uint16_t getTopOffRecordCount() {
     return (count > TOPOFF_HISTORY_SIZE) ? TOPOFF_HISTORY_SIZE : count;
 }
 
+bool isTopOffRingBufferValid() {
+    if (!framInitialized) return false;
+    uint16_t count = 0;
+    fram.read(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&count, 2);
+    return (count <= TOPOFF_HISTORY_SIZE);
+}
+
+bool clearTopOffRingBuffer() {
+    if (!framInitialized) return false;
+    uint16_t zero = 0;
+    fram.write(FRAM_ADDR_TOPOFF_COUNT, (uint8_t*)&zero, 2);
+    fram.write(FRAM_ADDR_TOPOFF_WPTR,  (uint8_t*)&zero, 2);
+    uint16_t badChksum = 0xFFFF;
+    fram.write(FRAM_ADDR_EMA_CHKSUM, (uint8_t*)&badChksum, 2);
+    LOG_INFO("TopOff ring buffer and EMA cleared");
+    return true;
+}
+
 // ================================================================
 // 🆕 EMA BLOCK
 // ================================================================
@@ -973,8 +991,8 @@ bool saveEmaBlockToFRAM(const EmaBlock& ema) {
     uint16_t chksum = calculateChecksum((uint8_t*)&ema, sizeof(EmaBlock));
     fram.write(FRAM_ADDR_EMA_CHKSUM, (uint8_t*)&chksum, 2);
 
-    LOG_INFO("EMA block saved: vol=%.1f int=%.0fs rate=%.2f bootstrap=%d",
-             ema.ema_volume_ml, ema.ema_interval_s, ema.ema_rate_ml_h, ema.bootstrap_count);
+    LOG_INFO("EMA block saved: rate=%.2f dev=%.2f int=%.0fs bootstrap=%d",
+             ema.ema_rate_ml_h, ema.ema_dev_ml_h, ema.ema_interval_s, ema.bootstrap_count);
     return true;
 }
 
@@ -1011,8 +1029,8 @@ bool saveTopOffConfigToFRAM(const TopOffConfig& cfg) {
     uint16_t chksum = calculateChecksum((uint8_t*)&cfg, sizeof(TopOffConfig));
     fram.write(FRAM_ADDR_TOPOFF_CFG_CHKSUM, (uint8_t*)&chksum, 2);
 
-    LOG_INFO("TopOffConfig saved: max_dose=%d ema_alpha=%.2f window=%lu",
-             cfg.max_dose_ml, cfg.ema_alpha, cfg.history_window_s);
+    LOG_INFO("TopOffConfig saved: dose=%d ml daily=%d ml alpha=%.2f window=%lu",
+             cfg.dose_ml, cfg.daily_limit_ml, cfg.ema_alpha, cfg.history_window_s);
     return true;
 }
 

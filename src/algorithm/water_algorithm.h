@@ -8,12 +8,14 @@
 // WaterAlgorithm — maszyna stanów sterująca pompą top-off.
 //
 // Stany: IDLE → DEBOUNCING → PUMPING → LOGGING → IDLE
+//                                     ↘ STATE_ERROR (limit dobowy / czerwony alert)
 //
-// Dozowanie dynamiczne (Wariant B + timeout):
+// Dozowanie stałe:
 //   Pompa startuje po potwierdzeniu debouncingu czujnika.
-//   Zatrzymuje się gdy czujnik wróci do HIGH (woda dolana)
-//   lub gdy upłynie max_pump_time (limit bezpieczeństwa).
-//   Faktyczna objętość = czas_pracy × flow_rate.
+//   Pracuje przez stały czas = dose_ml / flow_rate [s].
+//   Dawka (dose_ml) konfigurowana w GUI/provisioning.
+//   Rate [ml/h] = dose_ml / interval_od_poprzedniej × 3600.
+//   EMA śledzi rate i typowe odchylenia (ema_dev_ml_h) → dynamiczne progi alertów.
 // ============================================================
 
 class WaterAlgorithm {
@@ -21,17 +23,12 @@ private:
     AlgorithmState currentState;
 
     // ---- Timing ----
-    uint32_t stateStartMs;       // millis() ostatniej zmiany stanu
-    uint32_t pumpStartMs;        // millis() startu pompy w bieżącym cyklu
-    uint32_t maxPumpDurationMs;  // Limit bezpieczeństwa [ms] = max_dose_ml / flow_rate
-
-    // ---- Release verification (STATE_PUMPING) ----
-    uint32_t lastReleaseCheckMs; // millis() ostatniego sprawdzenia czujnika po start pompy
-    uint8_t  releaseCounter;     // Licznik kolejnych HIGH po uruchomieniu pompy
-    bool     lastCycleTimeout;   // true = ostatni cykl zatrzymany przez timeout
+    uint32_t stateStartMs;        // millis() ostatniej zmiany stanu
+    uint32_t pumpStartMs;         // millis() startu pompy w bieżącym cyklu
 
     // ---- Tracking interwałów ----
     uint32_t lastTopOffTimestamp; // Unix UTC ostatniej zakończonej dolewki
+    uint16_t totalCycleCount;     // Sekwencyjny numer cyklu (ciągły między restartami)
 
     // ---- Rolling 24h (cache, przeliczany po każdym cyklu) ----
     uint16_t rolling24hVolumeMl;
@@ -59,13 +56,12 @@ private:
     // Pump control
     void startAutoPump();
     void finishPumpCycle();
-    void updateReleaseVerification();
 
     // EMA i metryki
-    void    updateEMA(uint16_t volumeMl, uint32_t intervalS, float rateMlH);
-    uint8_t calculateAlertLevel(int8_t devVolPct, int8_t devRatePct) const;
-    int8_t  calculateDevPct(float current, float ema_val) const;
-    uint16_t scanRolling24h() const;   // Skanuje ring buffer FRAM
+    void    updateEMA(uint32_t intervalS, float rateMlH);
+    uint8_t calculateAlertLevel(int8_t devRateSigma) const;
+    int8_t  calculateDevSigma(float rateMlH) const;
+    uint16_t scanRolling24h() const;
 
     // Error signal
     void startErrorSignal(ErrorCode error);
@@ -100,6 +96,7 @@ public:
     ErrorCode      getLastError()        const { return lastError; }
     uint16_t       getRolling24hVolume() const { return rolling24hVolumeMl; }
     uint32_t       getPumpElapsedMs()    const;
+    uint16_t       getTotalCycleCount()  const { return totalCycleCount; }
 
     // ---- Konfiguracja ----
     const TopOffConfig& getConfig() const { return config; }
@@ -111,7 +108,7 @@ public:
     // ---- Interfejs ręczny (manual pump) ----
     bool requestManualPump(uint16_t durationMs);
     void onManualPumpComplete();
-    void addManualVolume(uint16_t volumeMl);  // Wywoływane przez pump_controller
+    void addManualVolume(uint16_t volumeMl);
 
     // ---- Reset / odzyskiwanie ----
     void resetFromError();

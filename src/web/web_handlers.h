@@ -43,9 +43,10 @@ void handleGetAvailableVolume(AsyncWebServerRequest* request);
 void handleSetAvailableVolume(AsyncWebServerRequest* request);
 void handleRefillAvailableVolume(AsyncWebServerRequest* request);
 
-// 🆕 NEW: Fill Water Max endpoints
+// 🆕 NEW: Fill Water Max / Dose endpoints
 void handleGetFillWaterMax(AsyncWebServerRequest* request);
-void handleSetFillWaterMax(AsyncWebServerRequest* request);
+void handleSetFillWaterMax(AsyncWebServerRequest* request);  // sets daily_limit_ml
+void handleSetDose(AsyncWebServerRequest* request);          // sets dose_ml
 
 // Cycle History endpoint
 void handleGetCycleHistory(AsyncWebServerRequest* request);

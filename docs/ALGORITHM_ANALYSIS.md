@@ -1,10 +1,10 @@
 # Analiza algorytmu ATO — wnioski robocze
 
-> Plik aktualizowany na bieżąco podczas pracy. Ostatnia aktualizacja: sesja 2026-03-10
+> Plik aktualizowany na bieżąco podczas pracy. Ostatnia aktualizacja: sesja 2026-03-12
 
 ---
 
-## 1. Wartości startowe (domyślne — FRAM pusty)
+## 1. Wartości startowe (domyślne — FRAM pusty / nowy magic)
 
 ### PumpSettings (config.h)
 | Parametr | Wartość | Uwagi |
@@ -13,186 +13,229 @@
 | `manualCycleSeconds` | 60 s | Czas ręcznego cyklu z GUI |
 | `calibrationCycleSeconds` | 30 s | Czas cyklu kalibracyjnego |
 
-### TopOffConfig (algorithm_config.h)
+### TopOffConfig (algorithm_config.h) — magic 0xA7
 | Parametr | Wartość | Znaczenie |
 |---|---|---|
-| `max_dose_ml` | **300 ml** | Limit bezpieczeństwa jednej dolewki |
+| `dose_ml` | **150 ml** | Stała dawka wody na jeden cykl (dawniej `max_dose_ml` z dynamicznym dozowaniem) |
+| `daily_limit_ml` | **2000 ml** | Limit dobowy — przekroczenie → STATE_ERROR (wymaga resetu) |
 | `ema_alpha` | **0.20** | Wygładzanie EMA (nowa wartość waży 20%) |
-| `vol_yellow_pct` | 30% | Alert żółty — odchylenie objętości |
-| `vol_red_pct` | 60% | Alert czerwony — odchylenie objętości |
-| `rate_yellow_pct` | 40% | Alert żółty — odchylenie tempa |
-| `rate_red_pct` | 80% | Alert czerwony — odchylenie tempa |
+| `rate_yellow_sigma` | **150** (1.5×) | Alert żółty — odchylenie w jednostkach sigma × 100 |
+| `rate_red_sigma` | **250** (2.5×) | Alert czerwony → STATE_ERROR (wymaga resetu) |
 | `history_window_s` | 86400 s | Okno rolling 24h |
-| `DEFAULT_MIN_BOOTSTRAP` | **5** | Min. dolewek zanim alerty są aktywne |
+| `available_ml` | **0** | Woda pozostała w zbiorniku [ml] — dekrementowana po każdym cyklu |
+| `available_max_ml` | **0** | Pojemność zbiornika przy ostatnim uzupełnieniu [ml]; 0 = funkcja nieaktywna |
+| `DEFAULT_MIN_BOOTSTRAP` | **5** | Min. dolewek zanim alerty sigma są aktywne |
 
-### Debouncing
+### Debouncing wejściowy
 | Parametr | Wartość | Efektywny czas |
 |---|---|---|
 | `DEBOUNCE_INTERVAL_MS` | 200 ms | — |
 | `DEBOUNCE_COUNTER` | 5 | 5 × 200 ms = **1000 ms** |
-| `RELEASE_CHECK_INTERVAL_MS` | 500 ms | — |
-| `RELEASE_DEBOUNCE_COUNT` | 3 | 3 × 500 ms = **1500 ms** po zwolnieniu |
 
-### Czas pracy pompy (timeout bezpieczeństwa)
+### Czas pracy pompy
 ```
-maxPumpDurationMs = max_dose_ml / volumePerSecond × 1000
-= 300 / 1.0 × 1000 = 300 000 ms = 300 s (5 minut)
+doseTimeS = dose_ml / volumePerSecond
+= 150 / 1.0 = 150 s (kalibracja wymagana)
+Po kalibracji np. 3 ml/s: 150 / 3.0 = 50 s
 ```
-**Po kalibracji np. 3 ml/s:** 300 / 3.0 = 100 s
 
 ---
 
-## 2. Mechanizm EMA — jak działa
+## 2. Maszyna stanów (aktualna)
 
-### Wzór
 ```
-Pierwsze zdarzenie (bootstrap_count == 0):
-    EMA = wartość_bezpośrednia
+STATE_IDLE
+    |  (czujnik wyzwolony przez water_sensors)
+    v
+STATE_DEBOUNCING   ← obsługiwany przez water_sensors (callback onDebounceComplete)
+    |
+    v
+STATE_PUMPING      ← pompa startuje na calculateDoseTime(dose_ml, volumePerSecond)
+    |  (isPumpActive() == false → cykl zakończony)
+    v
+STATE_LOGGING      ← zapis do FRAM (TopOffRecord + EmaBlock + TopOffConfig)
+    |
+    v
+STATE_IDLE
 
-Kolejne:
-    EMA_nowa = alpha × wartość + (1 - alpha) × EMA_stara
-    EMA_nowa = 0.20 × wartość + 0.80 × EMA_stara
+Wyjątki ze stanów:
+    STATE_PUMPING/LOGGING → daily_limit przekroczony → STATE_ERROR
+    STATE_PUMPING/LOGGING → red alert (sigma ≥ rate_red_sigma) → STATE_ERROR
+    STATE_ERROR ← oczekuje resetu przez GUI lub przycisk
+    STATE_MANUAL_OVERRIDE ← niezależna ścieżka (handleDirectPumpOn)
 ```
+
+**Kluczowa zmiana vs stara wersja:**
+- Brak faz `STATE_TRYB_1_WAIT`, `STATE_TRYB_1_DELAY`, `STATE_TRYB_2_VERIFY`, `STATE_TRYB_2_WAIT_GAP2`
+- Brak weryfikacji zwolnienia czujnika po dolewce (`updateReleaseVerification` usunięte)
+- Stała dawka — pompa pracuje dokładnie `doseTimeS` sekund, nie "do zwolnienia czujnika"
+
+---
+
+## 3. Mechanizm EMA — co śledzi (aktualna wersja)
 
 ### Trzy śledzane wartości
-- `ema_volume_ml` — typowa objętość jednej dolewki
-- `ema_interval_s` — typowy czas między dolewkami
-- `ema_rate_ml_h` — typowe tempo zużycia wody [ml/h]
+- `ema_rate_ml_h` — typowe tempo zużycia wody [ml/h] = `dose_ml / interval_s × 3600`
+- `ema_interval_s` — typowy czas między dolewkami [s]
+- `ema_dev_ml_h` — EMA absolutnych odchyleń od `ema_rate`: `EMA(|rate - ema_rate|)` — podstawa dynamicznych progów
 
-### Przykład zbieżności (alpha=0.20)
-| Dolewka # | Wartość [ml] | EMA [ml] | Odchylenie |
-|---|---|---|---|
-| 1 | 120 | 120.0 | 0% (bootstrap) |
-| 2 | 115 | 119.0 | -3.4% (bootstrap) |
-| 3 | 125 | 120.2 | +4.0% (bootstrap) |
-| 4 | 118 | 119.8 | -1.5% (bootstrap) |
-| 5 | 120 | 119.8 | +0.2% (bootstrap) |
-| 6 | **200** | **135.8** | **+47%** ← **ŻÓŁTY ALERT** |
-| 7 | **250** | **158.7** | **+57%** ← nadal żółty |
+> **ema_volume_ml usunięta** — stała dawka (`dose_ml`) jest zawsze taka sama, śledzenie objętości EMA nie wnosi informacji.
 
-> **Wniosek:** Po 5 dolewkach EMA powoli "przesunie się" w kierunku nowej normy.
-> Alert żółty przy +30%, czerwony przy +60% od aktualnego EMA.
-
-### Wzór odchylenia
+### Wzory
 ```
-dev_pct = (bieżąca - EMA) / EMA × 100
+# Rate bieżącego cyklu (od 2. dolewki gdy interval > 0):
+rate = dose_ml / interval_s × 3600
+
+# EMA (pierwsze zdarzenie — bootstrap):
+ema_rate = rate (bezpośrednie)
+
+# EMA kolejne:
+ema_rate_new = alpha × rate + (1 - alpha) × ema_rate_old
+ema_dev_new  = alpha × |rate - ema_rate_old| + (1 - alpha) × ema_dev_old
 ```
-Zakres: int8_t [-127, +127]. Alerty **wyłączone** gdy `bootstrap_count < 5`.
+
+### Progi alertów (dynamiczne, oparte na sigma)
+```
+# Odchylenie w jednostkach sigma (× 100, przechowywane jako int8_t):
+dev_sigma = (rate - ema_rate) / ema_dev × 100
+
+# Próg żółty (GUI warning only):
+|dev_sigma| >= rate_yellow_sigma   →  alert_level = 1
+
+# Próg czerwony (ERROR state, wymaga resetu):
+|dev_sigma| >= rate_red_sigma      →  alert_level = 2 → STATE_ERROR
+```
+
+**Zalety dynamicznych progów:**
+- Progi automatycznie dostosowują się do naturalnej zmienności środowiska
+- Mała zmienność → wąskie progi (czulszy alarm)
+- Duża zmienność → szerokie progi (mniej fałszywych alarmów)
+- `rate_yellow_sigma=150` ≈ 1.5σ, `rate_red_sigma=250` ≈ 2.5σ
+
+### Przykład (alpha=0.20, dose=150ml)
+| Dolewka # | interval_s | rate [ml/h] | ema_rate | ema_dev | dev_sigma | Alert |
+|---|---|---|---|---|---|---|
+| 1 | 0 | 0 | 0 | 0 | 0 | bootstrap |
+| 2 | 3600 | 150 | 150 | 0 | 0 | bootstrap |
+| 3 | 3600 | 150 | 150 | 0 | 0 | bootstrap |
+| 4 | 3720 | 145 | 149 | 1 | -400 | bootstrap |
+| 5 | 3480 | 155 | 150 | 2 | +250 | bootstrap |
+| 6 | 1200 | **450** | 210 | 62 | **+387** | **CZERWONY** |
+
+> Po wyjściu z bootstrapu (5 dolewek) już pierwsza anomalia (3× szybszy odpływ) wywołuje RED ALERT.
+
+### Zbieżność EMA (bootstrap)
+Alerty są **wyłączone** gdy `bootstrap_count <= DEFAULT_MIN_BOOTSTRAP (5)`.
+Po 5 dolewkach EMA ma wystarczająco dużo danych by progi sigma były wiarygodne.
 
 ---
 
-## 3. Jak testować
+## 4. Struktura danych FRAM
 
-### Opcja A — Python simulation (ZALECANA do logiki EMA)
-Plik: `docs/ema_simulation.py` (do stworzenia)
-
-Extrakcja czystej matematyki z C++ do Pythona. Można symulować:
-- Budowanie EMA od zera
-- Wstrzyknięcie anomalii (duże dawki, skrócone/wydłużone interwały)
-- Zbieżność z różnymi alpha (0.10, 0.20, 0.40)
-- Kiedy alarm się włącza i wygasa
-
-### Opcja B — Serial monitor na sprzęcie
-Algorytm loguje każdy krok via `LOG_INFO`:
-```
-EMA: vol=119.8 int=3600s rate=0.12 ml/h (bootstrap=5)
-METRICS: dev_vol=+47% dev_rate=+20% alert=1 bootstrap=5/5
-```
-Wystarczy przyłożyć czujnik i obserwować serial @ 115200.
-
-### Opcja C — PlatformIO native unit tests
-Wymaga mockowania: `millis()`, `digitalRead()`, `digitalWrite()`,
-`getUnixTimestamp()`, FRAM, RTC. Dużo roboty — sensowne dopiero gdy
-zbudujemy warstwę HAL/mock.
-
----
-
-## 3b. Wyniki symulacji (ema_simulation.py — 2026-03-10)
-
-### Stabilna praca
-EMA idealnie śledzi wartość stałą — odchylenia 0%, brak alertów. ✓
-
-### Anomalia (scenariusz awarii: 350ml co 1h zamiast 120ml co 6h)
-| Dolewka | Objętość | Alert | Wniosek |
-|---|---|---|---|
-| 6 (1. anomalia) | 350ml | **CZERWONY +111%** | Natychmiastowa detekcja |
-| 9 | 350ml | **CZERWONY +51%** | EMA "goni" nową wartość |
-| 10 | 350ml | ŻÓŁTY +37% | EMA już blisko anomalii → mniej czuły |
-
-> **Wniosek:** Przy trwałej anomalii EMA adaptuje się po ~8 zdarzeniach i alarm zanika.
-> To **poprawne zachowanie** — system "uznaje" nowe tempo za normę. Jeśli to awaria
-> (czujnik utknięty LOW), blokuje limit dobowy (do zaimplementowania — Problem 1).
-
-### Porównanie alpha — jak szybko EMA "zapomina"
-| alpha | Pierwszy alert | Powrót do OK po anomalii | Charakterystyka |
-|---|---|---|---|
-| **0.10** | Dolewka #6 | **Nie wraca** (w 15 dolewkach nadal ŻÓŁTY) | Wolno zapomina, konserwatywny |
-| **0.20** | Dolewka #6 | Nie wraca w 15 | Balans — **zalecany default** |
-| **0.40** | Dolewka #6 | Wraca po ~5 normalnych | Szybko adaptuje, mniej czuły |
-
-> **Wniosek:** Wszystkie alpha wykrywają anomalię przy tej samej dolewce.
-> Różnica to zachowanie **po** anomalii. alpha=0.10 długo "pamięta" — generuje
-> fałszywe alerty gdy środowisko się zmieni (lato/zima). alpha=0.40 zbyt szybko
-> adaptuje się do anomalii tracąc czujność. **Default 0.20 jest właściwy.**
-
-### Budowanie od zera (szum ±15ml, ±30min)
-Po 5 dolewkach alerty aktywne, ale naturalne odchylenia (±8%) nie przekraczają progu 30%.
-Progi 30%/60% są odpowiednio luźne dla normalnej pracy. ✓
-
----
-
-## 4. Znalezione problemy / luki
-
-### PROBLEM 1: Brak twardego limitu dobowego (24h)
-**Plik:** `water_algorithm.cpp:194`
+### TopOffRecord (20 bajtów) — ring buffer 60 rekordów
 ```cpp
-if (rolling24hVolumeMl >= config.max_dose_ml * 10) {
-    LOG_WARNING("ALGORITHM: 24h limit check — rolling=%d ml", rolling24hVolumeMl);
-}
-// Komentarz w kodzie: "Właściwy limit dobowy jako parametr konfiguracyjny — do dodania w v2"
+struct TopOffRecord {
+    uint32_t timestamp;       // Unix timestamp UTC
+    uint32_t interval_s;      // Czas od poprzedniej dolewki [s]
+    float    rate_ml_h;       // Tempo zużycia [ml/h]
+    uint16_t cycle_num;       // Sekwencyjny numer cyklu
+    int8_t   dev_rate_sigma;  // Odchylenie tempa w jednostkach sigma × 100
+    uint8_t  alert_level;     // 0=OK, 1=ŻÓŁTY, 2=CZERWONY
+    uint8_t  hour_of_day;     // Godzina lokalna (0–23) — rytm dobowy
+    uint8_t  flags;           // FLAG_MANUAL, FLAG_BOOTSTRAP, FLAG_DAILY_LIM, FLAG_RED_ALERT
+    uint8_t  _pad[2];
+};
 ```
-**Efekt:** Pompa startuje zawsze — limit dobowy tylko loguje ostrzeżenie, nie blokuje.
-**Fix:** Dodać `daily_max_ml` do `TopOffConfig` (np. DEFAULT 2000 ml) i blokować start gdy przekroczony.
 
-### PROBLEM 2: `addManualVolume()` nie zapisuje rekordu do FRAM
-**Plik:** `water_algorithm.cpp:586`
+### EmaBlock (16 bajtów)
 ```cpp
-void WaterAlgorithm::addManualVolume(uint16_t volumeMl) {
-    rolling24hVolumeMl += volumeMl;  // tylko cache RAM — nie ma rekordu FRAM!
-}
+struct EmaBlock {
+    float   ema_rate_ml_h;    // EMA tempa [ml/h]
+    float   ema_interval_s;   // EMA interwału [s]
+    float   ema_dev_ml_h;     // EMA absolutnych odchyleń — podstawa dynamicznych progów
+    uint8_t bootstrap_count;  // Liczba zebranych dolewek (cap: 255)
+    uint8_t _pad[3];
+};
 ```
-**Efekt:** Objętości ręcznych dolewek znikają po restarcie. EMA nie uwzględnia ręcznych dolewek.
 
-### PROBLEM 3: `scanRolling24h()` ładuje 60 rekordów z FRAM przy każdym wywołaniu
-**Plik:** `water_algorithm.cpp:424`
-Wywoływane w: `onDebounceComplete()`, `finishPumpCycle()`, `initFromFRAM()`
-Każdy odczyt = 1200 bajtów przez I2C. Na ESP32-C3 @ I2C 400kHz = ~24ms.
-**Nie krytyczne** przy obecnej częstości, ale warto mieć świadomość.
+### TopOffConfig (20 bajtów) — magic 0xA7
+```cpp
+struct TopOffConfig {
+    float    ema_alpha;           // [0.10–0.40]
+    uint32_t history_window_s;    // okno rolling [s]
+    uint16_t dose_ml;             // stała dawka [ml]
+    uint16_t daily_limit_ml;      // limit dobowy [ml]
+    uint8_t  rate_yellow_sigma;   // próg żółty [%sigma]
+    uint8_t  rate_red_sigma;      // próg czerwony [%sigma]
+    uint8_t  is_configured;       // 0xA7 = ważna konfiguracja
+    uint8_t  _pad[1];
+    uint16_t available_ml;        // woda w zbiorniku — bieżąca [ml]
+    uint16_t available_max_ml;    // woda w zbiorniku — przy ostatnim uzupełnieniu [ml]
+};
+```
 
-### PROBLEM 4: `flow_rate = 1.0 ml/s` to wartość nieskalibrowana
-Domyślna wartość `volumePerSecond = 1.0` daje:
-- Timeout bezpieczeństwa = 300s (5 minut!) — zbyt długi dla małej pompy
-- Objętość liczona błędnie dopóki nie wykonana kalibracja
-**Fix:** Przed pierwszym uruchomieniem wykonać kalibrację z GUI (`MANUAL_EXTENDED` przez 30s, zmierzyć fizycznie objętość).
-
-### PROBLEM 5: `checkPumpAutoEnable()` wywoływane w `update()` — niejasna zależność
-Funkcja zdefiniowana w `config.cpp`, wywoływana z algorytmu. Sprawdza 30-minutowy auto-re-enable systemu. Mechanizm działa poprawnie ale jest "ukryty" w algorytmie.
+### Adresy FRAM (0x0500+)
+| Adres | Rozmiar | Zawartość |
+|---|---|---|
+| 0x0560 | 20 B | TopOffConfig |
+| 0x0574 | 2 B | checksum konfiguracji |
+| 0x0580 | 16 B | EmaBlock |
+| 0x0590 | 2 B | checksum EMA |
+| 0x0600 | 2 B | TOPOFF_COUNT (liczba rekordów) |
+| 0x0602 | 2 B | TOPOFF_WPTR (write pointer) |
+| 0x0610 | 1200 B | ring buffer 60 × TopOffRecord |
 
 ---
 
-## 5. Parametry do ustawienia przed produkcją
+## 5. Śledzenie wody w zbiorniku (available_ml)
 
-Kolejność:
-1. **Kalibracja pompy** — uruchom `MANUAL_EXTENDED` przez 30s, zmierz fizycznie ml → oblicz `volumePerSecond`
-2. **Ustaw `max_dose_ml`** — np. 150 ml dla akwarium 100l (uzależnione od typowego parowania)
-3. **Dodaj `daily_max_ml`** — np. 1500 ml (zabezpieczenie przed awaria czujnika)
-4. Pozostałe (progi EMA, alpha) — można zostawić defaulty i korygować po 2-3 tygodniach danych
+### Zasada działania
+- Użytkownik wpisuje w GUI ile ml wody jest w zbiorniku i klika "Set / Refill"
+- System zapisuje tę wartość jako `available_ml` i `available_max_ml`
+- Po każdym automatycznym cyklu: `available_ml -= dose_ml` (min 0)
+- Jeśli `available_max_ml == 0` — funkcja nieaktywna (nie dekrementuje)
+- Kolumna "Available Water" w GUI pokazuje `available_ml / available_max_ml ml`
+
+### API
+- `GET /api/available-volume` → `{available_ml, available_max_ml}`
+- `POST /api/set-available-volume` → ustaw oboje na `value` (100–20000 ml)
+- `POST /api/refill-available-volume` → resetuj `available_ml = available_max_ml`
 
 ---
 
-## 6. Rolling 24h — co liczy, czego nie liczy
+## 6. Mechanizm ERROR state
 
-**Liczy:** wszystkie `TopOffRecord` z FRAM w oknie `now - history_window_s`
-**Nie liczy:** ręcznych dolewek (`addManualVolume` — patrz Problem 2)
-**Nie liczy:** dolewek sprzed poprzedniego restartu jeśli RTC nie miał czasu UTC
-(przy pierwszym uruchomieniu bez NTP timestamp = 0 → rekordy mogą mieć timestamp=0)
+Każdy niezerowy `ErrorCode` → `STATE_ERROR`, bezwarunkowy, wymaga resetu.
+
+| Kod | Przyczyna | Kiedy |
+|---|---|---|
+| `ERROR_DAILY_LIMIT` | `rolling_24h_ml >= daily_limit_ml` | po finalizacji cyklu |
+| `ERROR_RED_ALERT` | `dev_sigma >= rate_red_sigma` i po bootstrapie | po finalizacji cyklu |
+| `ERROR_BOTH` | oba jednocześnie | po finalizacji cyklu |
+
+Reset przez: przycisk GPIO (krótkie naciśnięcie) lub `POST /api/system-reset` z GUI.
+
+---
+
+## 7. Kwestie do obserwacji w produkcji
+
+### Kalibracja pompy (priorytet #1)
+Domyślne `volumePerSecond = 1.0 ml/s` powoduje błędnie wyliczony `doseTimeS`.
+```
+Procedura: Pump → Manual (60s) → zmierz fizycznie ml → volumePerSecond = ml / 60
+Zapisz w GUI: Pump Settings → volume per second
+```
+
+### Pierwsze 5 dolewek — bootstrap
+Przez pierwsze 5 cykli rekord jest oznaczony `FLAG_BOOTSTRAP`.
+Alerty sigma nie są aktywne — `ema_dev_ml_h` nie ma jeszcze wystarczającej historii.
+
+### Wzrost ema_dev po wielu normalnych dolewkach
+Jeśli środowisko jest bardzo stabilne (mała ema_dev), progi sigma mogą być wąskie
+i alerty żółte mogą pojawiać się przy niewielkich wahaniach temperatury/parowania.
+Można podnieść `rate_yellow_sigma` przez API (`/api/pump-settings` — do rozbudowy).
+
+### rolling_24h reset przy zmianie magic FRAM
+Zmiana `TOPOFF_CONFIG_MAGIC` (np. z 0xA6 na 0xA7) kasuje `available_ml/max` do domyślnych (0).
+Ring buffer i EMA są kasowane oddzielnie przez `isTopOffRingBufferValid()` — tylko gdy `count > 60`.
+Przy normalnej pracy ring buffer i EMA przeżywają zmianę magic (są chronione osobnymi checksumami).

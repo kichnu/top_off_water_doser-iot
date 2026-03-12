@@ -1,73 +1,81 @@
 # ESP32-C3 Automated Water Top-Off System
 
-Embedded system for automated aquarium/plant water level management. Built on Seeed Xiao ESP32-C3 with PlatformIO/Arduino framework. Features dual float sensor validation, multi-phase dosing algorithm, web dashboard, IP-based access control, and encrypted credential storage in FRAM.
+Embedded system for automated aquarium/plant water level management. Built on Seeed Xiao ESP32-C3 with PlatformIO/Arduino framework. Features dual float sensor validation, fixed-dose pumping algorithm with EMA rate tracking, web dashboard, IP-based access control, and encrypted credential storage in FRAM.
 
 ## Hardware
 
 **Platform:** Seeed Xiao ESP32-C3 (RISC-V, WiFi, 4MB flash)
 
 **Sensors and I/O:**
-- 2x float sensors (NC type, pull-up, active LOW) - independent water level detection
-- 1x pump relay output (HIGH = ON) - controls 12V dosing pump
-- 1x error signal output - pulsed error codes (1 pulse = daily limit, 2 = pump failure)
-- 1x button input (pull-up) - error reset (short press) / provisioning mode (5s hold)
+- 2x float sensors (NC type, pull-up, active LOW) on separate GPIO pins — parallel water level detection
+- 1x pump relay output (active LOW) — controls 12V dosing pump
+- 1x error signal output — pulsed error codes
+- 1x button input (pull-up) — error reset (short press) / provisioning mode (5s hold)
 
-**Peripherals (I2C bus):**
-- DS3231 RTC - hardware clock with battery backup, NTP-synchronized, UTC storage
-- FRAM 32KB - non-volatile storage for credentials (AES-256 encrypted), pump cycle history (ring buffer), settings, error statistics
+**Peripherals (I2C bus, SDA=GPIO6 SCL=GPIO7):**
+- DS3231 RTC — hardware clock with battery backup, NTP-synchronized, UTC storage
+- FRAM 32KB (MB85RC256V) — non-volatile storage for credentials (AES-256 encrypted), pump cycle history (ring buffer 60 records), EMA state, algorithm config
 
-**Time management:** RTC stores UTC. Display times auto-converted to local timezone (Poland CET/CEST with automatic DST). NTP sync at boot + hourly via IP addresses (DNS-independent). Fallback to ESP32 system time if DS3231 absent.
+**Time management:** RTC stores UTC. Display times auto-converted to local timezone (Poland CET/CEST with automatic DST). NTP sync at boot + hourly via IP addresses (DNS-independent).
 
 ## Algorithm
 
-The dosing algorithm is a state machine that validates water level drop through multiple phases before activating the pump. Each completed cycle produces a structured data record with timing and sensor diagnostics.
+The dosing algorithm is a state machine that delivers a fixed, configurable dose of water each time the float sensors detect a water level drop. A rolling EMA (Exponential Moving Average) tracks the consumption rate (ml/h) and its deviation to generate dynamic alerts.
 
 ### State Flow
 
 ```
-IDLE -> PRE_QUALIFICATION -> SETTLING -> DEBOUNCING -> PUMPING_AND_VERIFY -> LOGGING -> IDLE
-                |                           |                 |
-                v                           v                 v
-          IDLE (silent)              IDLE (false trigger)   ERROR / retry
+STATE_IDLE
+    |  float sensors trigger debounce
+    v
+STATE_DEBOUNCING  (handled by water_sensors module)
+    |  onDebounceComplete callback
+    v
+STATE_PUMPING     pump runs for exactly: dose_ml / volumePerSecond seconds
+    |  pump stops automatically
+    v
+STATE_LOGGING     save TopOffRecord + EmaBlock + config to FRAM
+    |
+    v
+STATE_IDLE
+
+Any state → STATE_ERROR when:
+  - rolling 24h volume >= daily_limit_ml
+  - rate deviation >= red alert sigma threshold (after bootstrap)
+STATE_ERROR requires explicit reset (web button or GPIO button)
 ```
 
-### Phase 1: Drop Validation
+### Fixed-Dose Dosing
 
-**Pre-qualification** - Fast initial filter. When any sensor reads LOW (water below threshold), the system requires multiple consecutive LOW readings within a short window. Filters out momentary disturbances (waves, vibrations). Failure returns silently to IDLE without logging.
+Each pump cycle delivers exactly `dose_ml` millilitres (default 150 ml, configurable 50–2000 ml). Pump run time is `dose_ml / volumePerSecond`. There is no sensor-release verification — the dose is time-based. This simplifies the algorithm and eliminates false failures caused by slow sensor response.
 
-**Settling** - Passive wait period after pre-qualification. No sensor reads - allows water surface to stabilize before precise measurement.
+### EMA Rate Tracking
 
-**Debouncing** - Full verification. Both sensors are independently monitored at fixed intervals. Each sensor must produce a required number of consecutive LOW readings to "pass" debounce. Possible outcomes:
-- Both sensors pass -> pump starts (nominal case)
-- One sensor passes, one times out -> pump starts with GAP1_FAIL flag
-- Neither passes -> logged as FALSE_TRIGGER, return to IDLE
+After each cycle the system calculates:
+- **rate** [ml/h] = `dose_ml / interval_since_last_cycle × 3600`
+- **ema_rate_ml_h** — EMA of rate (alpha=0.20 default)
+- **ema_dev_ml_h** — EMA of absolute deviations `|rate - ema_rate|` — forms the basis of dynamic alert thresholds
 
-**time_gap_1** - Recorded as the time difference between sensor 1 and sensor 2 completing debounce. Indicates how evenly both sensors detected the drop.
+Alert thresholds are expressed as sigma multiples:
+```
+dev_sigma = (rate - ema_rate) / ema_dev × 100
 
-### Phase 2: Pump and Release Verification
+|dev_sigma| >= rate_yellow_sigma (150 = 1.5σ) → yellow warning in GUI
+|dev_sigma| >= rate_red_sigma   (250 = 2.5σ) → ERROR state (requires reset)
+```
 
-After debounce, the pump runs for a calculated duration (`SINGLE_DOSE_VOLUME / volumePerSecond`). During pumping, sensors are monitored for HIGH (water rising). Each sensor that triggered the cycle must confirm release (multiple consecutive HIGH readings).
-
-**Outcomes:**
-- All required sensors confirm -> success, log cycle
-- Partial confirmation -> success with RELEASE_FAIL flag for unconfirmed sensor
-- No confirmation within timeout -> WATER_FAIL, retry (up to 3 attempts)
-- All retries exhausted -> ERROR state (requires manual reset via button or web)
-
-**time_gap_2** - Time difference between sensor 1 and sensor 2 confirming release. Indicates pump delivery symmetry.
-
-**water_trigger_time** - Time from pump start to first sensor confirmation. Indicates pump effectiveness and tube/sensor health.
+Dynamic thresholds adapt to the actual variability of the environment: a stable aquarium gets tight thresholds, a variable environment gets wider thresholds automatically. Alerts are inactive during the first 5 cycles (bootstrap period).
 
 ### Safety Limits
 
-- **Daily volume limit** (configurable, default 2000ml) - exceeding triggers ERROR state
-- **Available volume tracking** - tracks remaining water in source container
-- **System disable** - permanent kill switch via web; re-enabled only by clicking again
-- **24h auto-restart** - firmware restarts ESP32 after 24h uptime
+- **Daily volume limit** (`daily_limit_ml`, default 2000 ml) — rolling 24h window; exceeding → ERROR state
+- **Available volume tracking** — user enters physical water volume in source container; system decrements after each dose and shows remaining in GUI; inactive if not configured
+- **System disable** — manual kill switch via web dashboard; re-enables only by clicking again
+- **24h auto-restart** — firmware restarts ESP32 after 24h uptime (pump safely stopped first)
 
-### Reported Cycle Data
+### Cycle Data (TopOffRecord, stored in FRAM ring buffer — 60 records)
 
-Each cycle records: unix timestamp, time_gap_1, time_gap_2, water_trigger_time, pump duration, pump attempts, volume (ml), sensor result flags (debounce pass/fail per sensor, release pass/fail per sensor, false trigger), error code. Last ~200 cycles stored in FRAM ring buffer.
+Each cycle records: unix timestamp, interval since previous cycle, rate [ml/h], sequential cycle number, deviation in sigma units, alert level, hour of day (circadian analysis), flags (manual trigger, bootstrap, daily limit hit, red alert).
 
 ## Tech Stack
 
@@ -77,9 +85,9 @@ Each cycle records: unix timestamp, time_gap_1, time_gap_2, water_trigger_time, 
 | MCU | ESP32-C3 (Seeed Xiao) |
 | Web server | ESPAsyncWebServer + AsyncTCP |
 | JSON | ArduinoJson 7.x |
-| RTC | RTClib (Adafruit) - DS3231 |
+| RTC | RTClib (Adafruit) — DS3231 |
 | Storage | Adafruit FRAM I2C |
-| Encryption | mbedtls (AES-256-CBC, SHA-256) - bundled with ESP-IDF |
+| Encryption | mbedtls (AES-256-CBC, SHA-256) — bundled with ESP-IDF |
 | Auth | SHA-256 password hash, random session tokens, HttpOnly cookies |
 
 ## Security and Access Control
@@ -96,22 +104,22 @@ Incoming request
   +-- IP NOT on whitelist --> 403 Forbidden (all endpoints, including /login)
 ```
 
-**IP whitelist** - Hardcoded list of allowed LAN IPs (`config.cpp`). IPs not on the list are permanently blocked from all endpoints. Whitelisted IPs are additionally exempt from rate limiting and brute-force lockout.
+**IP whitelist** — Hardcoded list of allowed LAN IPs (`config.cpp`). IPs not on the list are permanently blocked from all endpoints.
 
-**Trusted VPS proxy** - A single hardcoded IP (WireGuard tunnel endpoint) bypasses all authentication. Designed for reverse proxy access from a VPS, allowing remote management without exposing ESP32 directly to the internet.
+**Trusted VPS proxy** — A single hardcoded IP (WireGuard tunnel endpoint) bypasses all authentication. Designed for reverse proxy access from a VPS.
 
-**Session authentication** - Login via password (SHA-256 hashed, compared against FRAM-stored hash). Sessions are token-based, bound to client IP, HttpOnly cookie, max 10 sessions total / 3 per IP, configurable timeout (default 30 min).
+**Session authentication** — Login via password (SHA-256 hashed, compared against FRAM-stored hash). Sessions are token-based, bound to client IP, HttpOnly cookie, max 10 sessions total / 3 per IP.
 
-**Rate limiting** - Max 5 requests/second per IP. After 10 failed login attempts, IP blocked for 60 seconds. Whitelisted IPs bypass both mechanisms.
+**Rate limiting** — Max 5 requests/second per IP. After 10 failed login attempts, IP blocked for 60 seconds. Whitelisted IPs bypass both mechanisms.
 
-**Credential storage** - WiFi SSID/password, admin password hash, VPS token, device ID stored in FRAM encrypted with AES-256-CBC using device-specific keys. Configured via Captive Portal.
+**Credential storage** — WiFi SSID/password, admin password hash, VPS token, device ID stored in FRAM encrypted with AES-256-CBC. Configured via Captive Portal.
 
 ### Known Limitations
 
-- HTTP only (no TLS) - traffic visible on WiFi network. Mitigated by IP whitelist restricting who can connect.
-- Session tokens generated with `random()` - limited entropy on ESP32.
+- HTTP only (no TLS) — traffic visible on WiFi network. Mitigated by IP whitelist.
+- Session tokens generated with `random()` — limited entropy on ESP32.
 - No CSRF protection on POST endpoints.
-- Whitelist is hardcoded - changes require recompilation.
+- Whitelist is hardcoded — changes require recompilation.
 
 ## API Reference
 
@@ -122,22 +130,22 @@ All `/api/*` endpoints require session authentication (cookie). Trusted VPS IP i
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/login` | Login page (HTML) |
-| POST | `/api/login` | Authenticate (`password` form param) -> set session cookie |
+| POST | `/api/login` | Authenticate (`password` form param) → set session cookie |
 | POST | `/api/logout` | Destroy session |
 
 ### Dashboard and Status
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/` | Dashboard (HTML, redirects to /login if no session) |
-| GET | `/api/status` | Full system status JSON (sensors, pump, algorithm state, RTC, WiFi, heap, uptime) |
-| GET | `/api/health` | Lightweight health check, no session required. Returns `{status, device_name, uptime}`. Used by VPS monitoring |
+| GET | `/` | Dashboard (HTML) |
+| GET | `/api/status` | Full system status JSON (sensors, pump, algorithm state, EMA, RTC, WiFi, heap, uptime) |
+| GET | `/api/health` | Lightweight health check, no session required. Returns `{status, device_name, uptime}` |
 
 ### Pump Control
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/pump/direct-on` | Turn pump on directly (bypasses algorithm, system-disable, daily limit). Optional `mode=monostable` POST param sets 120s safety timeout instead of configured duration |
+| POST | `/api/pump/direct-on` | Turn pump on directly (bypasses algorithm, system-disable, daily limit) |
 | POST | `/api/pump/direct-off` | Stop pump immediately (direct mode only) |
 | POST | `/api/pump/stop` | Emergency stop (any mode) |
 
@@ -146,29 +154,29 @@ All `/api/*` endpoints require session authentication (cookie). Trusted VPS IP i
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/pump-settings` | Get pump config (volume/s, cycle durations) |
-| POST | `/api/pump-settings` | Update volume per second (`volume_per_second` param, 0.1-20) |
-| GET/POST | `/api/system-toggle` | GET: system state `{enabled}`. POST: toggle enable/disable (permanent until toggled again) |
-| POST | `/api/system-reset` | Reset algorithm to IDLE from any state. Stops pump safely if running, saves partial cycle to FRAM. Returns `{success, state, message}`. Blocked only during STATE_LOGGING |
-| GET | `/api/fill-water-max` | Get daily volume limit |
-| POST | `/api/set-fill-water-max` | Set daily volume limit (`value` param, 100-10000ml) |
+| POST | `/api/pump-settings` | Update volume per second (`volume_per_second` param, 0.1–20) |
+| GET | `/api/fill-water-max` | Get `dose_ml` and `daily_limit_ml` |
+| POST | `/api/set-fill-water-max` | Set daily volume limit (`value` param, 100–10000 ml) |
+| POST | `/api/set-dose` | Set single dose volume (`value` param, 50–2000 ml) |
+| GET/POST | `/api/system-toggle` | GET: system enabled state. POST: toggle enable/disable |
+| POST | `/api/system-reset` | Reset algorithm to IDLE, clears ERROR state |
 
 ### Volume Tracking
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/daily-volume` | Daily dosed volume, max, last reset day |
-| POST | `/api/reset-daily-volume` | Reset daily counter to 0 |
-| GET | `/api/available-volume` | Source container status (max, current, is_empty) |
-| POST | `/api/set-available-volume` | Set container capacity (`value`, 100-10000ml) |
-| POST | `/api/refill-available-volume` | Mark container as refilled (reset current to max) |
+| GET | `/api/daily-volume` | Rolling 24h volume, daily limit, dose_ml |
+| GET | `/api/available-volume` | Physical reservoir: `{available_ml, available_max_ml}` |
+| POST | `/api/set-available-volume` | Set reservoir volume (`value`, 100–20000 ml); sets both current and max |
+| POST | `/api/refill-available-volume` | Reset current back to max (quick refill) |
 
 ### Statistics and History
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/api/get-statistics` | Error counters (gap1/gap2/water failures, last reset time) |
+| GET | `/api/get-statistics` | Error counters and last reset time |
 | POST | `/api/reset-statistics` | Reset error counters |
-| GET | `/api/cycle-history` | Full pump cycle history from FRAM (newest first) |
+| GET | `/api/cycle-history` | Pump cycle history from FRAM ring buffer (newest first) |
 
 ## Build and Deploy
 
@@ -192,51 +200,63 @@ Single build environment (`seeed_xiao_esp32c3`). Partition scheme: `huge_app.csv
 
 ## Provisioning (First-Time Setup)
 
-Initial configuration (WiFi credentials, admin password, VPS token) is done via Captive Portal, not hardcoded in firmware.
+Initial configuration (WiFi credentials, admin password, VPS token) is done via Captive Portal.
 
 ### Procedure
 
-1. **Enter provisioning mode** - Hold button (GPIO 8) for 5+ seconds during boot. Audio feedback (beep pattern on error signal pin) confirms detection.
+1. **Enter provisioning mode** — Hold button (GPIO 8) for 5+ seconds during boot. Audio feedback confirms detection.
 
-2. **Connect to AP** - ESP32 starts WiFi access point:
+2. **Connect to AP** — ESP32 starts WiFi access point:
    - SSID: `ESP32-WATER-SETUP`
    - Password: `setup12345`
    - IP: `192.168.4.1`
 
-3. **Configure** - Open browser, captive portal redirects to setup page. Enter:
-   - Device name (ID)
-   - WiFi SSID and password
-   - Admin password
-   - VPS auth token (optional)
+3. **Configure** — Open browser, captive portal redirects to setup page. Enter device name, WiFi credentials, admin password, VPS auth token.
 
-4. **Reboot** - ESP32 restarts in production mode, loads credentials from FRAM, connects to configured WiFi.
+4. **Reboot** — ESP32 restarts in production mode, loads credentials from FRAM, connects to configured WiFi.
 
-Credentials are AES-256 encrypted before writing to FRAM. To reconfigure, repeat the provisioning procedure.
+Credentials are AES-256 encrypted before writing to FRAM. To reconfigure, repeat provisioning.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| FRAM not detected | I2C wiring (SDA/SCL), FRAM power (3.3V), I2C address conflict |
-| WiFi not connecting | Re-run provisioning, verify SSID/password, check signal strength |
-| Web inaccessible | Verify your IP is in `ALLOWED_IPS` in `config.cpp`, check ESP32 got IP via serial monitor |
-| RTC battery warning | Replace CR2032 in DS3231 module. Warning persists until physical replacement (OSF flag) |
-| Auth fails after FRAM wipe | Re-run provisioning to program credentials. Without FRAM credentials all logins are blocked |
-| Pump runs but sensors don't confirm | Check float sensor wiring, verify sensor orientation, inspect tube for blockage |
-| ERROR state (LED pulsing) | 1 pulse = daily limit exceeded (resets midnight UTC). 2 pulses = pump failure after 3 retries. Reset via GPIO button (short press) or "System Reset" button in web dashboard |
+| FRAM not detected | I2C wiring (SDA=GPIO6, SCL=GPIO7), FRAM power (3.3V), I2C address conflict |
+| WiFi not connecting | Re-run provisioning, verify SSID/password in Captive Portal |
+| Web inaccessible | Verify your IP is in `ALLOWED_IPS` in `config.cpp`, check ESP32 IP via serial monitor |
+| RTC battery warning | Replace CR2032 in DS3231 module |
+| Auth fails after FRAM wipe | Re-run provisioning — credentials are stored only in FRAM |
+| Pump runs but no water delivered | Check tube connections, verify pump direction, perform calibration |
+| ERROR state (pulsing signal) | Daily limit exceeded or red alert (abnormal rate). Reset via "System Reset" button in GUI or short press GPIO button |
+| Pump timing wrong (dose too large/small) | Calibrate: run manual pump 60s, measure ml output, set `volumePerSecond = ml/60` in GUI |
 
 ## Source Structure
 
 ```
 src/
   main.cpp                  Entry point, mode detection, main loop
-  algorithm/                Dosing state machine and cycle data structures
-  config/                   Settings, credentials manager, FRAM-backed storage
+  algorithm/                Fixed-dose state machine, EMA rate tracking, FRAM data structures
+  config/                   Settings, pump parameters, system enable/disable
   core/                     Logging utilities
   crypto/                   AES-256 encryption for FRAM credentials
-  hardware/                 HAL: FRAM controller, pump, RTC, water sensors
-  network/                  WiFi manager, VPS logger
+  hardware/                 HAL: FRAM controller, pump, RTC, water sensors (debounce)
+  network/                  WiFi manager, VPS cloud logger
   provisioning/             Captive portal: AP, web server, button detection
   security/                 Auth manager, session manager, rate limiter
-  web/                      Production web server, API handlers, HTML pages
+  web/                      Production web server, API handlers, HTML dashboard
+```
+
+## FRAM Memory Layout
+
+```
+0x0000–0x0017   Magic number and firmware version
+0x0018–0x0417   Encrypted credentials (WiFi, admin password hash, VPS token, device ID)
+0x0500+         ESP32 water system data:
+  0x0560–0x0573   TopOffConfig (20 bytes, magic 0xA7)
+  0x0574–0x0575   Config checksum
+  0x0580–0x058F   EmaBlock (16 bytes)
+  0x0590–0x0591   EMA checksum
+  0x0600–0x0601   Ring buffer record count
+  0x0602–0x0603   Ring buffer write pointer
+  0x0610–0x0ABF   Ring buffer data (60 × TopOffRecord, 20 bytes each)
 ```
