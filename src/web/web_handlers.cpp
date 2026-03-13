@@ -642,7 +642,16 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
 
     JsonDocument doc;
     doc["success"] = true;
-    doc["total"] = count;
+    doc["total"]   = count;
+
+    // EMA context — needed by frontend charts
+    const EmaBlock&    ema = waterAlgorithm.getEma();
+    const TopOffConfig& cfg = waterAlgorithm.getConfig();
+    doc["ema_rate"]     = ema.ema_rate_ml_h;
+    doc["ema_dev"]      = ema.ema_dev_ml_h;
+    doc["bootstrap"]    = ema.bootstrap_count;
+    doc["yellow_sigma"] = cfg.rate_yellow_sigma;
+    doc["red_sigma"]    = cfg.rate_red_sigma;
 
     JsonArray arr = doc["cycles"].to<JsonArray>();
 

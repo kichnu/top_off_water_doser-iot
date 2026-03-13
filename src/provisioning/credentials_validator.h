@@ -42,28 +42,14 @@ ValidationResult prov_validateWiFiPassword(const String& password);
 ValidationResult prov_validateAdminPassword(const String& password);
 
 /**
- * Validate VPS token for provisioning
- * Length: 1-64 characters
- */
-ValidationResult prov_validateVPSToken(const String& token);
-
-/**
- * Validate VPS URL for provisioning
- * Must start with http:// or https://
- */
-ValidationResult prov_validateVPSURL(const String& url);
-
-/**
- * Validate all credentials at once
+ * Validate all credentials at once (passwords optional — empty = keep existing)
  * Returns first validation error found
  */
 ValidationResult prov_validateAllCredentials(
     const String& deviceName,
     const String& wifiSSID,
     const String& wifiPassword,
-    const String& adminPassword,
-    const String& vpsToken,
-    const String& vpsURL
+    const String& adminPassword
 );
 
 #endif

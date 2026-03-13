@@ -28,6 +28,11 @@ bool startWebServer() {
         request->send_P(200, "text/html", getSetupPageHTML());
     });
 
+    // ===== API: Current config (non-sensitive, for pre-population) =====
+    webServer->on("/api/prov/config", HTTP_GET, [](AsyncWebServerRequest *request){
+        handleProvConfig(request);
+    });
+
     // ===== API: WiFi Network Scan =====
     webServer->on("/api/scan", HTTP_GET, [](AsyncWebServerRequest *request){
         LOG_INFO("WiFi scan requested by: %s", request->client()->remoteIP().toString().c_str());

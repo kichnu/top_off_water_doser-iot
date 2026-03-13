@@ -314,46 +314,50 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 
                 <!-- WiFi Password -->
                 <div class="form-group">
-                    <label for="wifi_password">WiFi Password *</label>
-                    <input type="password" id="wifi_password" name="wifi_password" 
-                           placeholder="wifi password"
-                           minlength="8"
-                           required>
-                    <small>Minimum 8 characters</small>
-                    <span class="error">Password must be at least 8 characters</span>
+                    <label for="wifi_password">WiFi Password</label>
+                    <input type="password" id="wifi_password" name="wifi_password"
+                           placeholder="leave blank to keep current">
+                    <small id="wifi_password_hint">Leave blank to keep current password. Min. 8 characters.</small>
+                    <span class="error" id="wifi_password_error">Password must be at least 8 characters</span>
                 </div>
-                
+
                 <!-- Admin Password -->
                 <div class="form-group">
-                    <label for="admin_password">Admin Dashboard Password *</label>
-                    <input type="password" id="admin_password" name="admin_password" 
-                           placeholder="admin password"
-                           minlength="8"
-                           required>
-                    <small>For accessing device dashboard. Minimum 8 characters.</small>
-                    <span class="error">Password must be at least 8 characters</span>
+                    <label for="admin_password">Admin Dashboard Password</label>
+                    <input type="password" id="admin_password" name="admin_password"
+                           placeholder="leave blank to keep current">
+                    <small id="admin_password_hint">Leave blank to keep current password. Min. 8 characters.</small>
+                    <span class="error" id="admin_password_error">Password must be at least 8 characters</span>
                 </div>
-                
-                <!-- VPS Token -->
+
+                <!-- Algorithm Settings -->
+                <hr style="margin: 24px 0 20px; border: none; border-top: 1px solid #eee;">
+                <p style="color: #888; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px;">Algorithm Settings</p>
+
                 <div class="form-group">
-                    <label for="vps_token">VPS Authentication Token *</label>
-                    <input type="password" id="vps_token" name="vps_token" 
-                           placeholder="vps token"
-                           required>
-                    <small>Token from your VPS server</small>
-                    <span class="error">VPS token is required</span>
+                    <label for="ema_alpha">EMA Smoothing Factor</label>
+                    <input type="number" id="ema_alpha" name="ema_alpha"
+                           value="0.20" min="0.05" max="0.50" step="0.01">
+                    <small>0.05 = slow tracking / 0.50 = fast tracking. Default: 0.20</small>
+                    <span class="error">Must be 0.05 – 0.50</span>
                 </div>
-                
-                <!-- VPS URL -->
+
                 <div class="form-group">
-                    <label for="vps_url">VPS Server URL *</label>
-                    <input type="text" id="vps_url" name="vps_url" 
-                           placeholder="https://vps.example.com:8443"
-                           required>
-                    <small>Full URL with protocol and port</small>
-                    <span class="error">Valid URL required (http:// or https://)</span>
+                    <label for="yellow_sigma">Warning Threshold (%&#963;)</label>
+                    <input type="number" id="yellow_sigma" name="yellow_sigma"
+                           value="150" min="50" max="500" step="10">
+                    <small>Warn when rate deviates N% beyond typical variation. Default: 150</small>
+                    <span class="error">Must be 50 – 500</span>
                 </div>
-                
+
+                <div class="form-group">
+                    <label for="red_sigma">Error Threshold (%&#963;)</label>
+                    <input type="number" id="red_sigma" name="red_sigma"
+                           value="250" min="100" max="1000" step="10">
+                    <small>Stop + alarm at N%. Must exceed warning threshold. Default: 250</small>
+                    <span class="error">Must be 100 – 1000 and greater than warning threshold</span>
+                </div>
+
                 <button type="submit" class="btn" id="submitBtn">
                     <span id="submitBtnText">Save Configuration</span>
                     <span class="spinner hidden" id="submitSpinner"></span>
@@ -487,6 +491,35 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
             return '📶';
         }
         
+        // ============================================
+        // PRE-POPULATE FROM EXISTING CONFIG
+        // ============================================
+        async function loadCurrentConfig() {
+            try {
+                const r = await fetch('/api/prov/config');
+                const d = await r.json();
+                if (d.device_name) document.getElementById('device_name').value = d.device_name;
+                document.getElementById('ema_alpha').value    = d.ema_alpha    ?? 0.20;
+                document.getElementById('yellow_sigma').value = d.yellow_sigma ?? 150;
+                document.getElementById('red_sigma').value    = d.red_sigma    ?? 250;
+
+                if (!d.is_configured) {
+                    // First-time setup — passwords required
+                    const wp = document.getElementById('wifi_password');
+                    const ap = document.getElementById('admin_password');
+                    wp.required = true; wp.placeholder = 'wifi password';
+                    ap.required = true; ap.placeholder = 'admin password';
+                    document.getElementById('wifi_password_hint').textContent  = 'Required. Minimum 8 characters (WPA2).';
+                    document.getElementById('admin_password_hint').textContent = 'Required. Minimum 8 characters.';
+                }
+            } catch(e) {
+                // Can't reach config endpoint — treat as first install
+                document.getElementById('wifi_password').required  = true;
+                document.getElementById('admin_password').required = true;
+            }
+        }
+        window.addEventListener('load', loadCurrentConfig);
+
         // Form validation
         document.getElementById('configForm').addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -498,44 +531,67 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
             
             // Get form data
             const formData = {
-                device_name: document.getElementById('device_name').value,
-                wifi_ssid: document.getElementById('wifi_ssid').value,
+                device_name:   document.getElementById('device_name').value,
+                wifi_ssid:     document.getElementById('wifi_ssid').value,
                 wifi_password: document.getElementById('wifi_password').value,
-                admin_password: document.getElementById('admin_password').value,
-                vps_token: document.getElementById('vps_token').value,
-                vps_url: document.getElementById('vps_url').value
+                admin_password:document.getElementById('admin_password').value,
+                ema_alpha:     parseFloat(document.getElementById('ema_alpha').value),
+                yellow_sigma:  parseInt(document.getElementById('yellow_sigma').value),
+                red_sigma:     parseInt(document.getElementById('red_sigma').value)
             };
-            
+
             // Validate
             let hasErrors = false;
-            
+
             // Device name
             if (!/^[a-zA-Z0-9_-]{3,32}$/.test(formData.device_name)) {
                 document.getElementById('device_name').parentElement.classList.add('has-error');
                 hasErrors = true;
             }
-            
+
             // WiFi SSID
             if (formData.wifi_ssid.length === 0) {
                 document.getElementById('wifi_ssid').parentElement.classList.add('has-error');
                 hasErrors = true;
             }
-            
-            // WiFi Password
-            if (formData.wifi_password.length < 8) {
-                document.getElementById('wifi_password').parentElement.classList.add('has-error');
+
+            // WiFi Password (optional unless first-time)
+            const wifiPassEl = document.getElementById('wifi_password');
+            if (wifiPassEl.required && formData.wifi_password.length === 0) {
+                wifiPassEl.parentElement.classList.add('has-error');
+                document.getElementById('wifi_password_error').textContent = 'Password required for first-time setup';
+                hasErrors = true;
+            } else if (formData.wifi_password.length > 0 && formData.wifi_password.length < 8) {
+                wifiPassEl.parentElement.classList.add('has-error');
                 hasErrors = true;
             }
-            
-            // Admin Password
-            if (formData.admin_password.length < 8) {
-                document.getElementById('admin_password').parentElement.classList.add('has-error');
+
+            // Admin Password (optional unless first-time)
+            const adminPassEl = document.getElementById('admin_password');
+            if (adminPassEl.required && formData.admin_password.length === 0) {
+                adminPassEl.parentElement.classList.add('has-error');
+                document.getElementById('admin_password_error').textContent = 'Password required for first-time setup';
+                hasErrors = true;
+            } else if (formData.admin_password.length > 0 && formData.admin_password.length < 8) {
+                adminPassEl.parentElement.classList.add('has-error');
                 hasErrors = true;
             }
-            
-            // VPS URL
-            if (!/^https?:\/\/.+/.test(formData.vps_url)) {
-                document.getElementById('vps_url').parentElement.classList.add('has-error');
+
+            // EMA alpha
+            if (isNaN(formData.ema_alpha) || formData.ema_alpha < 0.05 || formData.ema_alpha > 0.50) {
+                document.getElementById('ema_alpha').parentElement.classList.add('has-error');
+                hasErrors = true;
+            }
+
+            // Yellow sigma
+            if (isNaN(formData.yellow_sigma) || formData.yellow_sigma < 50 || formData.yellow_sigma > 500) {
+                document.getElementById('yellow_sigma').parentElement.classList.add('has-error');
+                hasErrors = true;
+            }
+
+            // Red sigma
+            if (isNaN(formData.red_sigma) || formData.red_sigma < 100 || formData.red_sigma > 1000 || formData.red_sigma <= formData.yellow_sigma) {
+                document.getElementById('red_sigma').parentElement.classList.add('has-error');
                 hasErrors = true;
             }
             
@@ -566,30 +622,24 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 const result = await response.json();
                 
                 if (result.success) {
-                    // Success - show instructions
-                    showAlert('Configuration Saved!', 'Please restart the device: disconnect power, wait 5 seconds, then reconnect.', 'ok', function() {
-                        // Disable form
-                        document.getElementById('configForm').style.display = 'none';
-
-                        // Show success message
-                        const content = document.querySelector('.content');
-                        content.innerHTML = `
-                            <div style="text-align: center; padding: 40px;">
-                                <div style="font-size: 80px; margin-bottom: 20px;">✓</div>
-                                <h2 style="color: #2e7d32; margin-bottom: 20px;">Configuration Saved!</h2>
-                                <p style="color: #666; margin-bottom: 30px;">Please restart your device manually.</p>
-                                <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; text-align: left;">
-                                    <strong>Next Steps:</strong>
-                                    <ol style="margin: 10px 0 0 20px;">
-                                        <li style="margin: 10px 0;">Disconnect power from device</li>
-                                        <li style="margin: 10px 0;">Wait 5 seconds</li>
-                                        <li style="margin: 10px 0;">Reconnect power</li>
-                                        <li style="margin: 10px 0;">Device will boot in production mode</li>
-                                    </ol>
-                                </div>
+                    // Replace form with success content immediately
+                    document.querySelector('.content').innerHTML = `
+                        <div style="text-align: center; padding: 40px;">
+                            <div style="font-size: 80px; margin-bottom: 20px;">&#10003;</div>
+                            <h2 style="color: #2e7d32; margin-bottom: 20px;">Configuration Saved!</h2>
+                            <p style="color: #666; margin-bottom: 30px;">Please restart your device manually.</p>
+                            <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; text-align: left;">
+                                <strong>Next Steps:</strong>
+                                <ol style="margin: 10px 0 0 20px;">
+                                    <li style="margin: 10px 0;">Disconnect power from device</li>
+                                    <li style="margin: 10px 0;">Wait 5 seconds</li>
+                                    <li style="margin: 10px 0;">Reconnect power</li>
+                                    <li style="margin: 10px 0;">Device will boot in production mode</li>
+                                </ol>
                             </div>
-                        `;
-                    });
+                        </div>
+                    `;
+                    showAlert('Configuration Saved!', 'Please restart the device: disconnect power, wait 5 seconds, then reconnect.', 'ok');
                 } else {
                     // Error from server
                     showAlert('Configuration Failed', result.error || 'Unknown error', 'err');

@@ -822,47 +822,38 @@ const char* DASHBOARD_HTML = R"rawliteral(
             font-size: 0.75rem;
         }
 
-        /* Cycle History Table */
-        .cycle-table-wrap {
-            // overflow-x: auto;
-            // -webkit-overflow-scrolling: touch;
-            // max-height: 420px;
-            overflow-y: auto;
-            margin-top: 12px;
-        }
-        .cycle-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.72rem;
-            white-space: nowrap;
-        }
-        .cycle-table th {
-            background: var(--bg-input);
+        /* Cycle History Charts */
+        .chart-wrap { margin-top: 12px; }
+        .chart-sublabel {
+            font-size: 0.7rem;
             color: var(--text-muted);
-            font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
-            padding: 7px 8px;
-            text-align: center;
-            border-bottom: 1px solid var(--border);
-            position: sticky;
-            top: 0;
-            z-index: 1;
+            letter-spacing: 0.05em;
+            margin: 10px 0 4px;
         }
-        .cycle-table td {
-            padding: 5px 8px;
-            text-align: center;
-            border-bottom: 1px solid rgba(45, 58, 79, 0.4);
-            color: var(--text-secondary);
-            font-family: 'Courier New', monospace;
+        .chart-sublabel:first-child { margin-top: 0; }
+        canvas.cycle-chart {
+            width: 100%;
+            height: 190px;
+            display: block;
+            border-radius: 6px;
+            background: #1e293b;
         }
-        .cycle-table tr:hover td {
-            background: rgba(56, 189, 248, 0.06);
+        canvas.cycle-chart-sm {
+            width: 100%;
+            height: 150px;
+            display: block;
+            border-radius: 6px;
+            background: #1e293b;
         }
-        .ct-ok { color: var(--accent-green); }
-        .ct-fail { color: var(--accent-red); font-weight: 600; }
-        .ct-warn { color: var(--accent-yellow); }
-        .ct-n { color: var(--text-primary); }
+        .chart-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 10px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
 
     </style>
 </head>
@@ -1041,28 +1032,20 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 </div>
                 <h2>Cycle History</h2>
             </div>
-            <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="margin-bottom:4px;">Load History</button>
-            <div class="cycle-table-wrap">
-                <table class="cycle-table">
-                    <thead>
-                        <tr>
-                            <th>Date/Time</th>
-                            <th>S1 Deb</th>
-                            <th>S2 Deb</th>
-                            <th>Debounce</th>
-                            <th>Gap1</th>
-                            <th>Att</th>
-                            <th>S1 Rel</th>
-                            <th>S2 Rel</th>
-                            <th>Vol</th>
-                            <th>Pump</th>
-                            <th>Alarm</th>
-                        </tr>
-                    </thead>
-                    <tbody id="cycleTableBody">
-                        <tr><td colspan="11" style="color:var(--text-muted);">Click "Load History"</td></tr>
-                    </tbody>
-                </table>
+            <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="margin-bottom:8px;">Load History</button>
+            <div class="chart-wrap">
+                <div class="chart-sublabel">Evaporation rate (ml/h) per cycle</div>
+                <canvas id="chartRate" class="cycle-chart"></canvas>
+                <div class="chart-sublabel" style="margin-top:14px;">Interval between top-offs (min)</div>
+                <canvas id="chartInterval" class="cycle-chart-sm"></canvas>
+                <div class="chart-legend">
+                    <span><span style="color:#4ade80;">&#9679;</span> OK</span>
+                    <span><span style="color:#fbbf24;">&#9679;</span> Warning</span>
+                    <span><span style="color:#f87171;">&#9679;</span> Error</span>
+                    <span><span style="color:#64748b;">&#9679;</span> Bootstrap</span>
+                    <span><span style="color:#22d3ee; font-weight:bold;">&#8212;</span> EMA</span>
+                    <span style="font-size:0.65rem;margin-left:auto;">Yellow/red bands = alert thresholds</span>
+                </div>
             </div>
         </div>
 
@@ -1696,58 +1679,243 @@ const char* DASHBOARD_HTML = R"rawliteral(
         }
 
         // ============================================
-        // CYCLE HISTORY
+        // CYCLE CHARTS
         // ============================================
+        var CC = {
+            bg:'#1e293b', grid:'rgba(148,163,184,0.10)', txt:'#94a3b8',
+            ema:'#22d3ee', ok:'#4ade80', warn:'#fbbf24', err:'#f87171',
+            boot:'#64748b',
+            bandG:'rgba(74,222,128,0.13)',   // green  — normal range (±yellow_sigma)
+            bandY:'rgba(251,191,36,0.13)',   // yellow — warning ring (between yellow and red)
+            bandR:'rgba(239,68,68,0.12)'     // red    — alarm zone (outside ±red_sigma)
+        };
+
+        function ptColor(c) {
+            if (c.bootstrap) return CC.boot;
+            if (c.alert >= 2) return CC.err;
+            if (c.alert >= 1) return CC.warn;
+            return CC.ok;
+        }
+
+        function setupCanvas(id) {
+            var cv = document.getElementById(id);
+            var dpr = window.devicePixelRatio || 1;
+            var W = cv.offsetWidth, H = cv.offsetHeight;
+            cv.width = W * dpr; cv.height = H * dpr;
+            var ctx = cv.getContext('2d');
+            ctx.scale(dpr, dpr);
+            return {ctx:ctx, W:W, H:H};
+        }
+
+        function drawGrid(ctx, W, H, p, yMin, yMax) {
+            var cw = W-p.l-p.r, ch = H-p.t-p.b;
+            ctx.strokeStyle = CC.grid; ctx.lineWidth = 1;
+            ctx.fillStyle = CC.txt; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+            for (var i = 0; i <= 4; i++) {
+                var v = yMin + (yMax-yMin)*i/4;
+                var y = p.t + ch - ch*i/4;
+                ctx.beginPath(); ctx.moveTo(p.l, y); ctx.lineTo(p.l+cw, y); ctx.stroke();
+                ctx.fillText(Math.round(v), p.l-4, y+3);
+            }
+        }
+
+        function drawXLabels(ctx, pts, W, H, p) {
+            if (!pts.length) return;
+            var n = pts.length, cw = W-p.l-p.r;
+            var step = Math.max(1, Math.floor(n/6));
+            ctx.fillStyle = CC.txt; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+            for (var i = 0; i < n; i += step) {
+                var x = p.l + (n<=1 ? cw/2 : i/(n-1)*cw);
+                var d = new Date(pts[i].ts*1000);
+                var lbl = (d.getMonth()+1)+'/'+d.getDate()+' '+
+                          String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+                ctx.fillText(lbl, x, H-4);
+            }
+        }
+
+        function fmtV(v) { return Math.round(v); }
+
+        function drawTimeAxis(ctx, pts, W, H, p) {
+            if (pts.length < 2) return;
+            var minTs = pts[0].ts, maxTs = pts[pts.length-1].ts;
+            var spanH = (maxTs - minTs) / 3600;
+            var tickH = spanH > 96 ? 12 : spanH > 48 ? 6 : spanH > 24 ? 4 : spanH > 12 ? 2 : 1;
+            var tickS  = tickH * 3600;
+            var tsRange = maxTs - minTs;
+            var cw = W - p.l - p.r;
+            var firstTick = Math.ceil(minTs / tickS) * tickS;
+
+            ctx.textAlign = 'center';
+            for (var ts = firstTick; ts <= maxTs; ts += tickS) {
+                var x = p.l + (ts - minTs) / tsRange * cw;
+                var d = new Date(ts * 1000);
+                var hh = String(d.getHours()).padStart(2,'0');
+                var mm = String(d.getMinutes()).padStart(2,'0');
+                ctx.font = '10px sans-serif';
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText(hh+':'+mm, x, H - p.b + 11);
+                if (d.getHours() === 0 && d.getMinutes() === 0) {
+                    var day = String(d.getDate()).padStart(2,'0');
+                    var mon = String(d.getMonth()+1).padStart(2,'0');
+                    ctx.fillStyle = '#f97316';
+                    ctx.fillText(day+'.'+mon+'.'+d.getFullYear(), x, H - p.b + 22);
+                }
+            }
+        }
+
+        function drawRateChart(pts, ema) {
+            var s = setupCanvas('chartRate');
+            var ctx = s.ctx, W = s.W, H = s.H;
+            var p = {t:14, r:8, b:36, l:8};   // b=36: room for 2-row time axis
+            var cw = W-p.l-p.r, ch = H-p.t-p.b;
+            ctx.fillStyle = CC.bg; ctx.fillRect(0,0,W,H);
+
+            var rates = pts.filter(function(c){return c.rate_ml_h>0;}).map(function(c){return c.rate_ml_h;});
+            var hasEma = ema.ema_dev > 0.01 && ema.bootstrap >= 5;
+            var yMin=0, yMax=100;
+            if (rates.length) { yMin=Math.min.apply(null,rates); yMax=Math.max.apply(null,rates); }
+            if (hasEma) {
+                var rDev0=ema.red_sigma/100*ema.ema_dev;
+                yMin=Math.min(yMin, Math.max(0,ema.ema_rate-rDev0));
+                yMax=Math.max(yMax, ema.ema_rate+rDev0);
+            }
+            var rpad=(yMax-yMin)*0.18||yMax*0.18||5;
+            yMin=Math.max(0,yMin-rpad); yMax+=rpad;
+
+            // Time-based x positioning
+            var minTs = pts.length ? pts[0].ts : 0;
+            var maxTs = pts.length ? pts[pts.length-1].ts : 1;
+            var tsRange = Math.max(maxTs - minTs, 1);
+            function xOf(i){ return p.l + (pts[i].ts - minTs) / tsRange * cw; }
+            function yOf(v){ return p.t + (1-(v-yMin)/(yMax-yMin)) * ch; }
+
+            // Faint grid lines (no numbers)
+            ctx.strokeStyle=CC.grid; ctx.lineWidth=0.5;
+            for (var gi=0; gi<=4; gi++){
+                var gy=p.t+ch*gi/4;
+                ctx.beginPath(); ctx.moveTo(p.l,gy); ctx.lineTo(p.l+cw,gy); ctx.stroke();
+            }
+
+            if (hasEma) {
+                var yD=ema.yellow_sigma/100*ema.ema_dev;
+                var rD=ema.red_sigma/100*ema.ema_dev;
+                var yRt=yOf(ema.ema_rate+rD), yRb=yOf(Math.max(yMin,ema.ema_rate-rD));
+                var yYt=yOf(ema.ema_rate+yD), yYb=yOf(Math.max(yMin,ema.ema_rate-yD));
+
+                // Colored bands
+                ctx.fillStyle=CC.bandR;
+                ctx.fillRect(p.l, p.t,  cw, yRt-p.t);
+                ctx.fillRect(p.l, yRb,  cw, p.t+ch-yRb);
+                ctx.fillStyle=CC.bandY;
+                ctx.fillRect(p.l, yRt,  cw, yYt-yRt);
+                ctx.fillRect(p.l, yYb,  cw, yRb-yYb);
+                ctx.fillStyle=CC.bandG;
+                ctx.fillRect(p.l, yYt,  cw, yYb-yYt);
+
+                // Boundary value labels ON band edges — all grey
+                ctx.font='bold 10px sans-serif'; ctx.textAlign='left';
+                function drawBoundLabel(yPos, val) {
+                    if (yPos < p.t || yPos > p.t+ch) return;
+                    ctx.fillStyle='#94a3b8';
+                    ctx.fillText(fmtV(val), p.l+4, yPos+3);
+                }
+                drawBoundLabel(yRt, ema.ema_rate+rD);
+                drawBoundLabel(yRb, Math.max(0, ema.ema_rate-rD));
+                drawBoundLabel(yYt, ema.ema_rate+yD);
+                drawBoundLabel(yYb, Math.max(0, ema.ema_rate-yD));
+
+                // EMA line — starts after label text
+                var ye = yOf(ema.ema_rate);
+                var emaLbl = 'EMA ' + fmtV(ema.ema_rate);
+                ctx.font='bold 10px sans-serif';
+                var lblW = ctx.measureText(emaLbl).width + 6;
+                ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
+                ctx.beginPath(); ctx.moveTo(p.l+lblW, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle='#94a3b8'; ctx.textAlign='left';
+                ctx.fillText(emaLbl, p.l+4, ye+3);
+            }
+
+            // Data line
+            ctx.strokeStyle='rgba(148,163,184,0.28)'; ctx.lineWidth=1.5;
+            ctx.beginPath(); var first=true;
+            for (var i=0; i<pts.length; i++) {
+                if (pts[i].rate_ml_h<=0) continue;
+                var x=xOf(i), y=yOf(pts[i].rate_ml_h);
+                if (first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);
+            }
+            ctx.stroke();
+
+            // Data points — grey, slightly darker than line
+            for (var i=0; i<pts.length; i++) {
+                if (pts[i].rate_ml_h<=0) continue;
+                ctx.beginPath(); ctx.arc(xOf(i),yOf(pts[i].rate_ml_h),4,0,Math.PI*2);
+                ctx.fillStyle='rgba(100,116,139,0.85)'; ctx.fill();
+            }
+
+            drawTimeAxis(ctx, pts, W, H, p);
+            if (!pts.length) {
+                ctx.fillStyle=CC.txt; ctx.font='13px sans-serif'; ctx.textAlign='center';
+                ctx.fillText('No data yet',W/2,H/2);
+            }
+        }
+
+        function drawIntervalChart(pts) {
+            var s = setupCanvas('chartInterval');
+            var ctx = s.ctx, W = s.W, H = s.H;
+            var p = {t:14, r:14, b:28, l:52};
+            var cw = W-p.l-p.r, ch = H-p.t-p.b;
+            ctx.fillStyle = CC.bg; ctx.fillRect(0,0,W,H);
+
+            var mins = pts.map(function(c){return c.interval_s/60;});
+            var yMax = mins.length ? Math.max.apply(null,mins)*1.15 : 60;
+            if (yMax<10) yMax=10;
+
+            function xOf(i){return p.l+(pts.length<=1?cw/2:i/(pts.length-1)*cw);}
+            function yOf(v){return p.t+(1-v/yMax)*ch;}
+
+            drawGrid(ctx, W, H, p, 0, yMax);
+
+            ctx.save(); ctx.translate(13, p.t+ch/2); ctx.rotate(-Math.PI/2);
+            ctx.fillStyle=CC.txt; ctx.font='11px sans-serif'; ctx.textAlign='center';
+            ctx.fillText('min',0,0); ctx.restore();
+
+            var bw = pts.length>1 ? Math.max(3, cw/pts.length*0.65) : 20;
+            for (var i=0; i<pts.length; i++) {
+                if (pts[i].interval_s<=0) continue;
+                var x=xOf(i), y=yOf(mins[i]);
+                ctx.globalAlpha = pts[i].bootstrap ? 0.4 : 0.85;
+                ctx.fillStyle = ptColor(pts[i]);
+                ctx.fillRect(x-bw/2, y, bw, p.t+ch-y);
+            }
+            ctx.globalAlpha=1;
+
+            drawXLabels(ctx, pts, W, H, p);
+            if (!pts.length) {
+                ctx.fillStyle=CC.txt; ctx.font='13px sans-serif'; ctx.textAlign='center';
+                ctx.fillText('No data yet',W/2,H/2);
+            }
+        }
+
         function loadCycleHistory() {
             var btn = document.getElementById("loadCyclesBtn");
-            btn.disabled = true;
-            btn.textContent = "Loading...";
+            btn.disabled = true; btn.textContent = "Loading...";
 
             secureFetch("api/cycle-history")
                 .then(function(r) { return r ? r.json() : null; })
                 .then(function(data) {
-                    if (!data) return;
-                    if (!data.success) {
-                        console.error("Failed to load cycles:", data.error);
-                        return;
-                    }
-                    var tb = document.getElementById("cycleTableBody");
-                    tb.innerHTML = "";
-                    if (!data.cycles || data.cycles.length === 0) {
-                        tb.innerHTML = '<tr><td colspan="11" style="color:var(--text-muted);">No cycles recorded</td></tr>';
-                        return;
-                    }
-                    data.cycles.forEach(function(c) {
-                        var tr = document.createElement("tr");
-                        var d = new Date(c.ts * 1000);
-                        var ds = d.toLocaleDateString("en-GB",{day:"2-digit",month:"2-digit"})
-                                 + " " + d.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
-
-                        var al = "-", ac = "ct-n";
-                        if (c.alarm === 1) { al = "ERR1"; ac = "ct-fail"; }
-                        else if (c.alarm === 2) { al = "ERR2"; ac = "ct-fail"; }
-                        else if (c.alarm === 3) { al = "ERR0"; ac = "ct-fail"; }
-
-                        function f(ok) { return ok ? '<td class="ct-ok">OK</td>' : '<td class="ct-fail">FAIL</td>'; }
-                        function r(v) { return v===1 ? '<td class="ct-ok">OK</td>' : v===-1 ? '<td class="ct-fail">FAIL</td>' : '<td class="ct-n">X</td>'; }
-
-                        tr.innerHTML =
-                            '<td class="ct-n">' + ds + '</td>' +
-                            f(c.s1_deb) + f(c.s2_deb) + f(c.deb_ok) +
-                            '<td class="ct-n">' + c.gap1_s + 's</td>' +
-                            '<td class="' + (c.attempts > 1 ? 'ct-warn' : 'ct-n') + '">' + c.attempts + '</td>' +
-                            r(c.s1_rel) + r(c.s2_rel) +
-                            '<td class="ct-n">' + c.volume_ml + 'ml</td>' +
-                            '<td class="ct-n">' + c.pump_s + 's</td>' +
-                            '<td class="' + ac + '">' + al + '</td>';
-                        tb.appendChild(tr);
-                    });
+                    if (!data || !data.success) return;
+                    var pts = (data.cycles || []).slice().reverse(); // oldest first
+                    var ema = {
+                        ema_rate: data.ema_rate || 0, ema_dev: data.ema_dev || 0,
+                        bootstrap: data.bootstrap || 0,
+                        yellow_sigma: data.yellow_sigma || 150, red_sigma: data.red_sigma || 250
+                    };
+                    drawRateChart(pts, ema);
+                    drawIntervalChart(pts);
                 })
                 .catch(function(e) { console.error("Load cycles error:", e); })
-                .finally(function() {
-                    btn.disabled = false;
-                    btn.textContent = "Load History";
-                });
+                .finally(function() { btn.disabled=false; btn.textContent="Load History"; });
         }
 
         // ============================================

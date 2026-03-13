@@ -32,6 +32,7 @@
  * @param request AsyncWebServerRequest
  * @param json Parsed JSON body
  */
+void handleProvConfig(AsyncWebServerRequest *request);
 void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json);
 
 #endif
