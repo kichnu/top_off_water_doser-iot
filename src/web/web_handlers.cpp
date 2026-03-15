@@ -15,6 +15,8 @@
 #include <ArduinoJson.h>
 #include "../config/credentials_manager.h"
 #include "../algorithm/water_algorithm.h"
+#include "../algorithm/kalkwasser_scheduler.h"
+#include "../hardware/peristaltic_pump.h"
 
 void handleDashboard(AsyncWebServerRequest* request) {
     if (!checkAuthentication(request)) {
@@ -162,6 +164,16 @@ void handleStatus(AsyncWebServerRequest* request) {
     json["rtc_battery_issue"] = isBatteryIssueDetected();
     json["free_heap"] = ESP.getFreeHeap();
     json["uptime"] = millis();
+
+    // ============================================
+    // KALKWASSER STATUS
+    // ============================================
+    json["kalk_state"]        = kalkwasserScheduler.getStateString();
+    json["kalk_enabled"]      = kalkwasserScheduler.isEnabled();
+    json["kalk_last_mix_ts"]  = kalkwasserScheduler.getLastMixTs();
+    json["kalk_last_dose_ts"] = kalkwasserScheduler.getLastDoseTs();
+    json["kalk_alarm"]        = kalkwasserScheduler.isNoTopoffAlarm();
+    json["rtc_ts"]            = (uint32_t)getUnixTimestamp();
     
     // ============================================
     // DEVICE INFO
@@ -676,6 +688,114 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
     String jsonResponse;
     serializeJson(doc, jsonResponse);
     request->send(200, "application/json", jsonResponse);
+}
+
+// ===============================
+// CLEAR CYCLE HISTORY HANDLER
+// ===============================
+
+void handleClearCycleHistory(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    if (waterAlgorithm.isInCycle()) {
+        request->send(409, "application/json", "{\"success\":false,\"error\":\"Cycle in progress\"}");
+        return;
+    }
+    bool ok = waterAlgorithm.resetCycleHistory();
+    if (ok) {
+        request->send(200, "application/json", "{\"success\":true}");
+    } else {
+        request->send(500, "application/json", "{\"success\":false,\"error\":\"FRAM write failed\"}");
+    }
+}
+
+// ===============================
+// KALKWASSER HANDLERS
+// ===============================
+
+void handleKalkwasserConfig(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    if (request->method() == HTTP_GET) {
+        JsonDocument doc;
+        doc["success"]            = true;
+        doc["enabled"]            = kalkwasserScheduler.isEnabled();
+        doc["daily_dose_ml"]      = kalkwasserScheduler.getDailyDoseMl();
+        doc["flow_rate_ul_per_s"] = kalkwasserScheduler.getFlowRateUlPerS();
+        doc["flow_rate_ml_s"]     = (float)kalkwasserScheduler.getFlowRateUlPerS() / 1000.0f;
+        doc["dose_duration_s"]    = kalkwasserScheduler.getDoseDurationS();
+        doc["next_mix_ts"]        = kalkwasserScheduler.getNextMixTs();
+        doc["next_dose_ts"]       = kalkwasserScheduler.getNextDoseTs();
+        doc["kalk_state"]         = kalkwasserScheduler.getStateString();
+        String resp; serializeJson(doc, resp);
+        request->send(200, "application/json", resp);
+    } else {
+        bool en = kalkwasserScheduler.isEnabled();
+        uint16_t dose_ml = kalkwasserScheduler.getDailyDoseMl();
+        if (request->hasParam("enabled", true))
+            en = request->getParam("enabled", true)->value().toInt() != 0;
+        if (request->hasParam("daily_dose_ml", true))
+            dose_ml = (uint16_t)request->getParam("daily_dose_ml", true)->value().toInt();
+        if (dose_ml > 500) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"dose_ml max 500\"}");
+            return;
+        }
+        kalkwasserScheduler.setConfig(en, dose_ml);
+        JsonDocument doc;
+        doc["success"]       = true;
+        doc["enabled"]       = en;
+        doc["daily_dose_ml"] = dose_ml;
+        String resp; serializeJson(doc, resp);
+        request->send(200, "application/json", resp);
+    }
+}
+
+void handleKalkwasserCalibrate(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    bool ok = kalkwasserScheduler.startCalibration();
+    if (ok) {
+        request->send(200, "application/json", "{\"success\":true,\"duration_s\":30}");
+    } else {
+        const char* reason = waterAlgorithm.isInCycle()
+            ? "Top-off cycle in progress"
+            : "Scheduler not idle";
+        JsonDocument doc;
+        doc["success"] = false;
+        doc["error"]   = reason;
+        String resp; serializeJson(doc, resp);
+        request->send(409, "application/json", resp);
+    }
+}
+
+void handleKalkwasserFlowRate(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    if (!request->hasParam("measured_ml", true)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing measured_ml\"}");
+        return;
+    }
+    float ml = request->getParam("measured_ml", true)->value().toFloat();
+    if (!kalkwasserScheduler.setFlowRate(ml)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value out of range (0.1-500 ml)\"}");
+        return;
+    }
+    JsonDocument doc;
+    doc["success"]         = true;
+    doc["measured_ml"]     = ml;
+    doc["flow_rate_ul_s"]  = kalkwasserScheduler.getFlowRateUlPerS();
+    doc["flow_rate_ml_s"]  = kalkwasserScheduler.getFlowRateMlPerS();
+    doc["dose_duration_s"] = kalkwasserScheduler.getDoseDurationS();
+    String resp; serializeJson(doc, resp);
+    request->send(200, "application/json", resp);
 }
 
 // ===============================

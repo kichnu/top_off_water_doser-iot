@@ -405,170 +405,73 @@ const char* DASHBOARD_HTML = R"rawliteral(
         }
 
         /* ===== FIRST CARD: System Status ===== */
-        .status-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
+        .status-main {
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 12px 16px;
+            gap: 12px; position: relative;
         }
-
-        .status-row {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+        .status-main.status-ok {
+            border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.05);
         }
-
-        @media (max-width: 600px) {
-            .status-row {
-                grid-template-columns: 1fr;
-            }
+        .status-main.status-ok::after {
+            content: ''; position: absolute; top: 8px; right: 8px;
+            width: 6px; height: 6px; background: var(--accent-green);
+            border-radius: 50%; animation: pulse 2s infinite;
         }
-
-        .status-badge {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background: var(--bg-input);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 10px 14px;
-            position: relative;
+        .status-main.status-error {
+            border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06);
         }
-
-        .status-badge .label {
-            font-size: 0.65rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--text-muted);
-            margin-bottom: 4px;
+        .status-main-body { flex: 1; min-width: 0; }
+        .status-main-desc { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); }
+        .status-main-sub {
+            display: flex; flex-wrap: wrap; gap: 8px;
+            margin-top: 5px; font-size: 0.72rem;
         }
-
-        .status-badge .value {
-            font-family: 'Courier New', monospace;
-            font-size: 0.875rem;
-            font-weight: 600;
+        .sub-on     { color: var(--accent-green); }
+        .sub-off    { color: var(--text-muted); }
+        .sub-warn   { color: var(--accent-yellow); }
+        .sub-danger { color: var(--accent-red); }
+        .sub-sep    { color: var(--border); }
+        .status-main-wifi {
+            display: flex; flex-direction: column; align-items: center;
+            gap: 2px; flex-shrink: 0; padding-right: 8px;
         }
-
-        .status-badge.ok {
-            background: rgba(34, 197, 94, 0.15);
-            border-color: rgba(34, 197, 94, 0.3);
+        .wifi-label { font-size: 0.6rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .wifi-dot   { font-size: 1.1rem; line-height: 1; }
+        .status-main-wifi.wifi-on  .wifi-dot { color: var(--accent-green); }
+        .status-main-wifi.wifi-off .wifi-dot { color: var(--text-muted); }
+        .status-info {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+            background: var(--bg-input); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 8px 16px;
+            font-size: 0.75rem; color: var(--text-secondary);
+            font-family: 'Courier New', monospace; margin-top: 10px;
         }
-        .status-badge.ok .value { color: var(--accent-green); }
+        .status-info .si-sep { color: var(--text-muted); font-family: sans-serif; }
+        .status-info.rtc-warn { border-color: rgba(251,191,36,0.35); }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-        .status-badge.off .value { color: var(--text-muted); }
-
-        .status-badge.idle .value { color: var(--accent-yellow); }
-
-        .status-badge.active {
-            background: rgba(34, 197, 94, 0.15);
-            border-color: rgba(34, 197, 94, 0.3);
-        }
-        .status-badge.active .value { color: var(--accent-green); }
-
-        .status-badge.warning {
-            background: rgba(234, 179, 8, 0.15);
-            border-color: rgba(234, 179, 8, 0.3);
-        }
-        .status-badge.warning .value { color: var(--accent-yellow); }
-
-        .status-badge.danger {
-            background: rgba(249, 115, 22, 0.15);
-            border-color: rgba(249, 115, 22, 0.3);
-        }
-        .status-badge.danger .value { color: var(--accent-orange); }
-
-        .status-badge.error {
-            background: rgba(239, 68, 68, 0.15);
-            border-color: rgba(239, 68, 68, 0.3);
-        }
-        .status-badge.error .value { color: var(--accent-red); }
-
-        .status-badge.ok::before {
-            content: '';
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            width: 6px;
-            height: 6px;
-            background: var(--accent-green);
-            border-radius: 50%;
-            animation: pulse 2s infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
-
-        .status-message {
-            background: var(--bg-input);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 12px 16px;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            grid-column: span 2;
-        }
-
-        @media (max-width: 600px) {
-            .status-message {
-                grid-column: span 1;
-            }
-        }
-
-        .status-message .main {
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 2px;
-        }
-
-        .status-message .sub {
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-
-        .info-item {
-            display: flex;
-            align-items: center;
-            flex-direction: column;
-            background: var(--bg-input);
-            border-radius: var(--radius-sm);
-            padding: 12px;
-        }
-
-        .info-item .label {
-            font-size: 0.7rem;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            margin-bottom: 4px;
-        }
-
-        .info-item .value {
-            font-family: 'Courier New', monospace;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: var(--text-primary);
-        }
-
-        .info-item .hint {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
-
-        .info-item.connected .value { color: var(--accent-green); }
-        .info-item.rtc-error .value { color: var(--accent-red); }
 
         /* ===== SECOND CARD: Pump Control ===== */
         .pump-controls {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 12px;
         }
+        @media (max-width: 480px) {
+            .pump-controls { grid-template-columns: 1fr; }
+        }
+        .btn-kalk-off {
+            background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.3);
+            color: var(--accent-yellow);
+        }
+        .btn-kalk-off:hover:not(:disabled) { background: rgba(234,179,8,0.18); }
+        .btn-kalk-on {
+            background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3);
+            color: var(--accent-green);
+        }
+        .btn-kalk-on:hover:not(:disabled) { background: rgba(34,197,94,0.25); }
 
         .btn {
             display: flex;
@@ -832,20 +735,38 @@ const char* DASHBOARD_HTML = R"rawliteral(
             margin: 10px 0 4px;
         }
         .chart-sublabel:first-child { margin-top: 0; }
-        canvas.cycle-chart {
+        .chart-rate-scroll {
+            overflow-x: hidden;
+            width: 100%;
+            border-radius: 6px;
+        }
+        #chartRate {
             width: 100%;
             height: 190px;
             display: block;
-            border-radius: 6px;
             background: #1e293b;
+            /* width overridden by JS after data load */
         }
-        canvas.cycle-chart-sm {
-            width: 100%;
-            height: 150px;
-            display: block;
-            border-radius: 6px;
-            background: #1e293b;
+        .chart-scroll-btns {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 8px;
         }
+        .chart-scroll-btn {
+            background: rgba(148,163,184,0.08);
+            border: 1px solid rgba(148,163,184,0.18);
+            color: #94a3b8;
+            border-radius: 10px;
+            padding: 10px 0;
+            font-size: 1.1rem;
+            width: 80px;
+            min-height: 44px;
+            cursor: pointer;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .chart-scroll-btn:active { background: rgba(148,163,184,0.18); }
         .chart-legend {
             display: flex;
             flex-wrap: wrap;
@@ -853,6 +774,56 @@ const char* DASHBOARD_HTML = R"rawliteral(
             margin-top: 10px;
             font-size: 0.72rem;
             color: var(--text-muted);
+        }
+
+        /* Kalkwasser schedule tiles */
+        .kalk-schedule-wrap {
+            margin-bottom: 20px; 
+        }
+        .kalk-section {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+            margin-top: 10px;
+        }
+        .kalk-section-label {
+            font-size: 0.7rem; font-weight: 600; color: var(--text-primary);
+            text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;
+        }
+        .kalk-mix-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+        }
+        .kalk-dose-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 6px;
+        }
+        @media (max-width: 640px) {
+            .kalk-dose-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+        .kalk-tile {
+            background: var(--bg-primary); border: 1px solid var(--border);
+            border-radius: 6px; padding: 8px 4px; font-size: 0.78rem;
+            font-family: 'Courier New', monospace; font-weight: 600;
+            color: var(--text-secondary); cursor: default;
+            text-align: center; transition: background 0.2s, color 0.2s;
+        }
+        .kalk-tile.kalk-ev-done    { background: rgba(74,222,128,0.1); border-color: rgba(74,222,128,0.3); color: #4ade80; }
+        .kalk-tile.kalk-ev-active  { background: rgba(251,191,36,0.15); border-color: rgba(251,191,36,0.45); color: #fbbf24; font-weight: 700; }
+        .kalk-tile.kalk-ev-pending { color: var(--text-secondary); }
+        .kalk-tile.kalk-ev-missed  { color: rgba(248,113,113,0.45); border-color: rgba(248,113,113,0.15); }
+        .kalk-alarm-banner {
+            background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3);
+            color: #f87171; border-radius: 6px; padding: 8px 12px;
+            font-size: 0.8rem; font-weight: 600; margin-top: 10px; display: none;
+        }
+
+        .card-subheader {
+            font-size: 0.9rem; font-weight: 600; color: var(--text-primary);
+            padding: 12px 0 4px; border-top: 1px solid var(--border); margin-top: 12px;
         }
 
     </style>
@@ -865,7 +836,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <div class="logo-icon">
                     <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
                 </div>
-                <h1>Top Off Water</h1>
+                <h1>ATO & Kalkwasser Dosing</h1>
             </div>
             <button class="btn-back" onclick="logout()">Back</button>
         </header>
@@ -879,53 +850,64 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <h2>System Status</h2>
             </div>
 
-            <div class="status-grid">
-                <!-- Row 1: sensors, system, pump -->
-                <div class="status-row">
-                    <div class="status-badge off" id="sensor1Badge">
-                        <span class="label">SENSORS</span>
-                        <span class="value">OFF</span>
-                    </div>
-                    <div class="status-badge ok" id="systemBadge">
-                        <span class="label">System</span>
-                        <span class="value">OK</span>
-                    </div>
-                    <div class="status-badge idle" id="pumpBadge">
-                        <span class="label">Pump</span>
-                        <span class="value">IDLE</span>
+            <div class="status-main status-ok" id="statusMain">
+                <div class="status-main-body">
+                    <div class="status-main-desc" id="processDescription">IDLE - Waiting for sensors</div>
+                    <div class="status-main-sub">
+                        <span id="sensor1Badge" class="sub-off">Sensors: OFF</span>
+                        <span class="sub-sep">•</span>
+                        <span id="pumpBadge" class="sub-off">Pump: IDLE</span>
                     </div>
                 </div>
-
-                <!-- Row 2: status-message, wifi status -->
-                <div class="status-row">
-                    <div class="status-message">
-                        <div class="main" id="processDescription">IDLE - Waiting for sensors</div>
-                        <div class="sub" id="processTime">—</div>
-                    </div>
-                    <div class="info-item connected" id="wifiItem">
-                        <span class="label">WiFi Status</span>
-                        <span class="value" id="wifiStatus">Loading...</span>
+                <div class="status-main-wifi wifi-off" id="wifiItem">
+                    <span class="wifi-label">WiFi</span>
+                    <span class="wifi-dot" id="wifiStatus">●</span>
+                </div>
+            </div>
+            <div class="status-info" id="rtcItem">
+                <span id="rtcTime">—</span><span id="rtcHint"></span>
+                <span class="si-sep">•</span>
+                <span id="freeHeap">—</span>
+                <span class="si-sep">•</span>
+                <span id="uptime">—</span>
+            </div>
+            <!-- Kalkwasser schedule (tile grid) -->
+            <div class="kalk-schedule-wrap" id="kalkScheduleWrap">
+                <div class="kalk-alarm-banner" id="kalkAlarmBanner">
+                    &#9888; No top-off events in last 24h — kalkwasser dose may be too high!
+                </div>
+                <div class="kalk-section">
+                    <div class="kalk-section-label">Mixing schedule</div>
+                    <div class="kalk-mix-grid">
+                        <div class="kalk-tile kalk-ev-pending" id="kalkMix0">00:15</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkMix1">06:15</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkMix2">12:15</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkMix3">18:15</div>
                     </div>
                 </div>
-
-                <!-- Row 3: RTC Time, Free Memory, Uptime -->
-                <div class="status-row">
-                    <div class="info-item" id="rtcItem">
-                        <span class="label">RTC Time (UTC)</span>
-                        <span class="value" id="rtcTime">Loading...</span>
-                        <span class="hint" id="rtcHint"></span>
-                    </div>
-                    <div class="info-item">
-                        <span class="label">Free Memory</span>
-                        <span class="value" id="freeHeap">Loading...</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="label">Uptime</span>
-                        <span class="value" id="uptime">Loading...</span>
+                <div class="kalk-section">
+                    <div class="kalk-section-label">Dosing schedule</div>
+                    <div class="kalk-dose-grid">
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose0">02:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose1">03:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose2">04:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose3">05:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose4">08:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose5">09:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose6">10:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose7">11:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose8">14:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose9">15:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose10">16:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose11">17:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose12">20:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose13">21:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose14">22:00</div>
+                        <div class="kalk-tile kalk-ev-pending" id="kalkDose15">23:00</div>
                     </div>
                 </div>
             </div>
-        </div>
+            </div>
 
         <!-- SECOND CARD: Pump Control -->
         <div class="card">
@@ -937,15 +919,10 @@ const char* DASHBOARD_HTML = R"rawliteral(
             </div>
 
             <div class="pump-controls">
-                <button id="manualPumpBtn" class="btn btn-off">
-                    Manual Pump OFF
-                </button>
-                <button id="systemToggleBtn" class="btn btn-primary" onclick="toggleSystem()">
-                    System On
-                </button>
-                <button id="systemResetBtn" class="btn btn-secondary" onclick="systemReset()">
-                    System Reset
-                </button>
+                <button id="systemToggleBtn" class="btn btn-primary" onclick="toggleSystem()">System On</button>
+                <button id="kalkwasserBtn" class="btn btn-kalk-off" onclick="toggleKalkwasser()">Kalkwasser OFF</button>
+                <button id="manualPumpBtn" class="btn btn-off">Manual Pump OFF</button>
+                <button id="systemResetBtn" class="btn btn-secondary" onclick="systemReset()">System Reset</button>
             </div>
         </div>
 
@@ -1032,19 +1009,24 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 </div>
                 <h2>Cycle History</h2>
             </div>
-            <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="margin-bottom:8px;">Load History</button>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="flex:1;">Load History</button>
+                <button class="btn btn-secondary" onclick="deleteCycleHistory()" id="deleteCyclesBtn" style="flex:1;color:#f87171;border-color:rgba(248,113,113,0.3);">Delete Data</button>
+            </div>
             <div class="chart-wrap">
                 <div class="chart-sublabel">Evaporation rate (ml/h) per cycle</div>
-                <canvas id="chartRate" class="cycle-chart"></canvas>
-                <div class="chart-sublabel" style="margin-top:14px;">Interval between top-offs (min)</div>
-                <canvas id="chartInterval" class="cycle-chart-sm"></canvas>
+                <div id="chartRateScroll" class="chart-rate-scroll">
+                    <canvas id="chartRate"></canvas>
+                </div>
+                <div class="chart-scroll-btns">
+                    <button class="chart-scroll-btn" onclick="scrollRateChart(-1)">&#9664;</button>
+                    <button class="chart-scroll-btn" onclick="scrollRateChart(1)">&#9654;</button>
+                </div>
                 <div class="chart-legend">
-                    <span><span style="color:#4ade80;">&#9679;</span> OK</span>
-                    <span><span style="color:#fbbf24;">&#9679;</span> Warning</span>
-                    <span><span style="color:#f87171;">&#9679;</span> Error</span>
-                    <span><span style="color:#64748b;">&#9679;</span> Bootstrap</span>
-                    <span><span style="color:#22d3ee; font-weight:bold;">&#8212;</span> EMA</span>
-                    <span style="font-size:0.65rem;margin-left:auto;">Yellow/red bands = alert thresholds</span>
+                    <span><span style="background:#4ade8022;border:1px solid #4ade8055;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Normal</span>
+                    <span><span style="background:#fbbf2422;border:1px solid #fbbf2455;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Warning</span>
+                    <span><span style="background:#f8717122;border:1px solid #f8717155;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Alarm</span>
+                    <span><span style="color:#94a3b8;font-weight:bold;">&#8212;</span> EMA</span>
                 </div>
             </div>
         </div>
@@ -1058,23 +1040,45 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <h2>Pump Calibration</h2>
             </div>
 
-
+            <div class="card-subheader">ATO Pump Calibration</div>
             <div class="settings-row">
-                <!-- Element 1: Pump Calibration button -->
                 <div class="setting-item">
                     <button id="extendedBtn" class="btn btn-secondary" onclick="triggerExtendedPump()">Start Calibration (30s)</button>
                 </div>
-
-                <!-- Element 2: Input z opisem -->
                 <div class="setting-item input-group">
-                    <label for="volumePerSecond"  style="text-align: center;">Mililiters per Second</label>
+                    <label for="volumePerSecond" style="text-align: center;">Mililiters per Second</label>
                     <input class="volumePerSecond" type="number" id="volumePerSecond" min="0.1" max="50.0" step="0.1" value="1.0">
                 </div>
-
-                <!-- Element 3: Update Setting + current value -->
                 <div class="setting-item">
                     <button class="btn btn-primary" onclick="updateVolumePerSecond()">Update Setting</button>
                     <span class="current-value" id="volumeStatus">Current: — ml/s</span>
+                </div>
+            </div>
+
+            <div class="card-subheader">Kalkwasser Pump Calibration</div>
+            <div class="settings-row">
+                <div class="setting-item">
+                    <button id="kalkCalibBtn" class="btn btn-secondary" onclick="startKalkCalibration()">Start Calibration (30s)</button>
+                </div>
+                <div class="setting-item input-group">
+                    <label for="kalkMeasuredMl" style="text-align: center;">Volume measured (ml in 30s)</label>
+                    <input type="number" id="kalkMeasuredMl" min="0.1" max="500" step="0.1" placeholder="15.3">
+                </div>
+                <div class="setting-item">
+                    <button class="btn btn-primary" onclick="saveKalkFlowRate()">Save Result</button>
+                    <span class="current-value" id="kalkFlowStatus">Current: — ml/s</span>
+                </div>
+            </div>
+
+            <div class="card-subheader">Kalkwasser Dosing Settings</div>
+            <div class="settings-row" style="grid-template-columns:1fr 1fr;">
+                <div class="setting-item input-group">
+                    <label for="kalkDailyDose" style="text-align:center;">Daily dose (ml)</label>
+                    <input type="number" id="kalkDailyDose" min="1" max="500" step="1" value="0">
+                </div>
+                <div class="setting-item">
+                    <button class="btn btn-primary" onclick="saveKalkConfig()">Save</button>
+                    <span class="current-value" id="kalkDoseStatus">—</span>
                 </div>
             </div>
         </div>
@@ -1392,62 +1396,30 @@ const char* DASHBOARD_HTML = R"rawliteral(
         // STATUS BADGE UPDATES
         // ============================================
         function updateSensorBadge(badgeId, isActive) {
-            const badge = document.getElementById(badgeId);
-            if (!badge) return;
-
-            const valueSpan = badge.querySelector(".value");
-            badge.className = "status-badge";
-
-            if (isActive) {
-                badge.classList.add("active");
-                valueSpan.textContent = "ON";
-            } else {
-                badge.classList.add("off");
-                valueSpan.textContent = "OFF";
-            }
+            const el = document.getElementById(badgeId);
+            if (!el) return;
+            el.textContent = 'Sensors: ' + (isActive ? 'ON' : 'OFF');
+            el.className = isActive ? 'sub-on' : 'sub-off';
         }
 
         function updatePumpBadge(badgeId, isActive, attempt) {
-            const badge = document.getElementById(badgeId);
-            if (!badge) return;
-
-            const valueSpan = badge.querySelector(".value");
-            badge.className = "status-badge";
-
+            const el = document.getElementById(badgeId);
+            if (!el) return;
             if (!isActive) {
-                badge.classList.add("idle");
-                valueSpan.textContent = "IDLE";
+                el.textContent = 'Pump: IDLE'; el.className = 'sub-off';
             } else {
-                if (attempt === 1) {
-                    badge.classList.add("active");
-                } else if (attempt === 2) {
-                    badge.classList.add("warning");
-                } else if (attempt >= 3) {
-                    badge.classList.add("danger");
-                } else {
-                    badge.classList.add("active");
-                }
-                valueSpan.textContent = "ACTIVE";
+                el.textContent = 'Pump: ACTIVE';
+                el.className = attempt >= 3 ? 'sub-danger' : attempt === 2 ? 'sub-warn' : 'sub-on';
             }
         }
 
         function updateSystemBadge(badgeId, hasError, isDisabled) {
-            const badge = document.getElementById(badgeId);
-            if (!badge) return;
-
-            const valueSpan = badge.querySelector(".value");
-            badge.className = "status-badge";
-
-            if (hasError) {
-                badge.classList.add("error");
-                valueSpan.textContent = "ERROR";
-            } else if (isDisabled) {
-                badge.classList.add("off");
-                valueSpan.textContent = "OFF";
-            } else {
-                badge.classList.add("ok");
-                valueSpan.textContent = "OK";
-            }
+            const main = document.getElementById('statusMain');
+            if (!main) return;
+            main.className = 'status-main';
+            if (hasError)        main.classList.add('status-error');
+            else if (isDisabled) main.classList.add('status-disabled');
+            else main.classList.add('status-ok');
         }
 
         function formatTime(seconds) {
@@ -1479,14 +1451,13 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     if (!data) return;
                     
                     // Badges
-                    updateSensorBadge("sensor1Badge", data.sensor1_active);
-                    updateSensorBadge("sensor2Badge", data.sensor2_active);
+                    updateSensorBadge("sensor1Badge", data.sensor_active);
+                    updateSensorBadge("sensor2Badge", data.sensor_active);
                     updatePumpBadge("pumpBadge", data.pump_active, data.pump_attempt || 0);
                     updateSystemBadge("systemBadge", data.system_error, data.system_disabled);
 
                     // Process status
                     document.getElementById("processDescription").textContent = data.state_description || "IDLE - Waiting for sensors";
-                    document.getElementById("processTime").textContent = data.remaining_seconds > 0 ? "Remaining: " + formatTime(data.remaining_seconds) : "—";
 
                     // System toggle sync
                     if (typeof data.system_disabled !== 'undefined') {
@@ -1499,27 +1470,19 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
                     // WiFi status
                     const wifiItem = document.getElementById("wifiItem");
-                    const wifiStatus = document.getElementById("wifiStatus");
-                    wifiStatus.textContent = data.wifi_status || "Unknown";
-                    if (data.wifi_connected) {
-                        wifiItem.className = "info-item connected";
-                    } else {
-                        wifiItem.className = "info-item";
-                    }
+                    wifiItem.className = 'status-main-wifi ' + (data.wifi_connected ? 'wifi-on' : 'wifi-off');
 
                     // RTC
                     const rtcItem = document.getElementById("rtcItem");
                     const rtcTime = document.getElementById("rtcTime");
                     const rtcHint = document.getElementById("rtcHint");
-                    
                     rtcTime.textContent = data.rtc_time || "Error";
-                    
                     if (data.rtc_battery_issue || data.rtc_needs_sync) {
-                        rtcItem.className = "info-item rtc-error";
-                        rtcHint.textContent = "⚠️ Battery issue - replace CR2032";
+                        rtcItem.className = "status-info rtc-warn";
+                        rtcHint.textContent = " ⚠ Battery";
                     } else {
-                        rtcItem.className = "info-item";
-                        rtcHint.textContent = data.rtc_info || "";
+                        rtcItem.className = "status-info";
+                        rtcHint.textContent = "";
                     }
 
                     // Memory & Uptime
@@ -1531,6 +1494,15 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     const extendedBtn = document.getElementById("extendedBtn");
                     if (extendedBtn) {
                         extendedBtn.disabled = data.pump_active;
+                    }
+
+                    // Kalkwasser schedule update
+                    if (data.rtc_ts) {
+                        updateKalkSchedule(data.rtc_ts, data.kalk_last_mix_ts || 0,
+                                           data.kalk_last_dose_ts || 0,
+                                           data.kalk_state || 'IDLE',
+                                           data.kalk_enabled || false,
+                                           data.kalk_alarm || false);
                     }
                 })
                 .catch((error) => {
@@ -1690,88 +1662,101 @@ const char* DASHBOARD_HTML = R"rawliteral(
             bandR:'rgba(239,68,68,0.12)'     // red    — alarm zone (outside ±red_sigma)
         };
 
-        function ptColor(c) {
-            if (c.bootstrap) return CC.boot;
-            if (c.alert >= 2) return CC.err;
-            if (c.alert >= 1) return CC.warn;
-            return CC.ok;
-        }
-
-        function setupCanvas(id) {
-            var cv = document.getElementById(id);
-            var dpr = window.devicePixelRatio || 1;
-            var W = cv.offsetWidth, H = cv.offsetHeight;
-            cv.width = W * dpr; cv.height = H * dpr;
-            var ctx = cv.getContext('2d');
-            ctx.scale(dpr, dpr);
-            return {ctx:ctx, W:W, H:H};
-        }
-
-        function drawGrid(ctx, W, H, p, yMin, yMax) {
-            var cw = W-p.l-p.r, ch = H-p.t-p.b;
-            ctx.strokeStyle = CC.grid; ctx.lineWidth = 1;
-            ctx.fillStyle = CC.txt; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-            for (var i = 0; i <= 4; i++) {
-                var v = yMin + (yMax-yMin)*i/4;
-                var y = p.t + ch - ch*i/4;
-                ctx.beginPath(); ctx.moveTo(p.l, y); ctx.lineTo(p.l+cw, y); ctx.stroke();
-                ctx.fillText(Math.round(v), p.l-4, y+3);
-            }
-        }
-
-        function drawXLabels(ctx, pts, W, H, p) {
-            if (!pts.length) return;
-            var n = pts.length, cw = W-p.l-p.r;
-            var step = Math.max(1, Math.floor(n/6));
-            ctx.fillStyle = CC.txt; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-            for (var i = 0; i < n; i += step) {
-                var x = p.l + (n<=1 ? cw/2 : i/(n-1)*cw);
-                var d = new Date(pts[i].ts*1000);
-                var lbl = (d.getMonth()+1)+'/'+d.getDate()+' '+
-                          String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
-                ctx.fillText(lbl, x, H-4);
-            }
-        }
 
         function fmtV(v) { return Math.round(v); }
 
-        function drawTimeAxis(ctx, pts, W, H, p) {
-            if (pts.length < 2) return;
-            var minTs = pts[0].ts, maxTs = pts[pts.length-1].ts;
-            var spanH = (maxTs - minTs) / 3600;
-            var tickH = spanH > 96 ? 12 : spanH > 48 ? 6 : spanH > 24 ? 4 : spanH > 12 ? 2 : 1;
-            var tickS  = tickH * 3600;
-            var tsRange = maxTs - minTs;
+        function drawTimeAxisScrollable(ctx, minTs, maxTs, W, H, p) {
+            var DAY_S = 86400;
+            var tsRange = Math.max(maxTs - minTs, 1);
             var cw = W - p.l - p.r;
-            var firstTick = Math.ceil(minTs / tickS) * tickS;
+            function xTs(ts) { return p.l + (ts - minTs) / tsRange * cw; }
 
-            ctx.textAlign = 'center';
-            for (var ts = firstTick; ts <= maxTs; ts += tickS) {
-                var x = p.l + (ts - minTs) / tsRange * cw;
-                var d = new Date(ts * 1000);
-                var hh = String(d.getHours()).padStart(2,'0');
-                var mm = String(d.getMinutes()).padStart(2,'0');
-                ctx.font = '10px sans-serif';
-                ctx.fillStyle = '#94a3b8';
-                ctx.fillText(hh+':'+mm, x, H - p.b + 11);
-                if (d.getHours() === 0 && d.getMinutes() === 0) {
-                    var day = String(d.getDate()).padStart(2,'0');
-                    var mon = String(d.getMonth()+1).padStart(2,'0');
-                    ctx.fillStyle = '#f97316';
-                    ctx.fillText(day+'.'+mon+'.'+d.getFullYear(), x, H - p.b + 22);
+            // Alternating day background bands (every other day slightly lighter)
+            var firstDay = Math.floor(minTs / DAY_S) * DAY_S;
+            for (var d = firstDay, idx = 0; d < maxTs; d += DAY_S, idx++) {
+                if (idx % 2 === 0) continue;
+                var x1 = Math.max(p.l, xTs(d));
+                var x2 = Math.min(p.l + cw, xTs(d + DAY_S));
+                if (x2 > x1) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.025)';
+                    ctx.fillRect(x1, p.t, x2 - x1, H - p.t - p.b);
                 }
+            }
+
+            // Hour tick labels (HH:MM) — always 1h intervals since view = 6h
+            var firstTick = Math.ceil(minTs / 3600) * 3600;
+            ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+            for (var ts = firstTick; ts <= maxTs; ts += 3600) {
+                var d = new Date(ts * 1000);
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText(
+                    String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'),
+                    xTs(ts), H - p.b + 13
+                );
+            }
+
+            // Midnight separators + day date labels (DD.MM)
+            var firstMid = Math.ceil(minTs / DAY_S) * DAY_S;
+            for (var ts = firstMid; ts <= maxTs; ts += DAY_S) {
+                var x = xTs(ts);
+                ctx.save();
+                ctx.strokeStyle = 'rgba(148,163,184,0.18)';
+                ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+                ctx.beginPath(); ctx.moveTo(x, p.t); ctx.lineTo(x, H - p.b); ctx.stroke();
+                ctx.setLineDash([]); ctx.restore();
+                var d = new Date(ts * 1000);
+                var lbl = String(d.getDate()).padStart(2,'0') + '.' + String(d.getMonth()+1).padStart(2,'0');
+                ctx.fillStyle = '#f97316'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText(lbl, x, H - p.b + 26);
+            }
+
+            // Left-edge date label for the starting day (when it's not at midnight)
+            var d0 = new Date(minTs * 1000);
+            if (d0.getHours() !== 0 || d0.getMinutes() !== 0) {
+                var lbl0 = String(d0.getDate()).padStart(2,'0') + '.' + String(d0.getMonth()+1).padStart(2,'0');
+                ctx.fillStyle = 'rgba(249,115,22,0.6)'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+                ctx.fillText(lbl0, p.l + 3, H - p.b + 26);
             }
         }
 
         function drawRateChart(pts, ema) {
-            var s = setupCanvas('chartRate');
-            var ctx = s.ctx, W = s.W, H = s.H;
-            var p = {t:14, r:8, b:36, l:8};   // b=36: room for 2-row time axis
+            var VIEW_HOURS = 6;
+            var MAX_SPAN_S = 5 * 86400;
+            var scrollEl = document.getElementById('chartRateScroll');
+            var viewW = scrollEl.offsetWidth;
+            var pxPerHour = viewW / VIEW_HOURS;
+
+            // Determine time range: min 6h, max 5 days, anchored to newest point
+            var maxTs = pts.length ? pts[pts.length-1].ts : Math.floor(Date.now()/1000);
+            var minTs = pts.length ? pts[0].ts : maxTs - VIEW_HOURS * 3600;
+            var spanS = maxTs - minTs;
+            if (spanS < VIEW_HOURS * 3600) { minTs = maxTs - VIEW_HOURS * 3600; spanS = VIEW_HOURS * 3600; }
+            if (spanS > MAX_SPAN_S)        { minTs = maxTs - MAX_SPAN_S;        spanS = MAX_SPAN_S; }
+
+            var canvasW = Math.round(pxPerHour * spanS / 3600);
+            var H = 190;
+            var cv = document.getElementById('chartRate');
+            cv.style.width = canvasW + 'px';
+            cv.style.height = H + 'px';
+            var dpr = window.devicePixelRatio || 1;
+            cv.width = Math.round(canvasW * dpr); cv.height = Math.round(H * dpr);
+            var ctx = cv.getContext('2d');
+            ctx.scale(dpr, dpr);
+            var W = canvasW;
+
+            var p = {t:14, r:8, b:44, l:8};  // b=44: 2-row axis (HH:MM + DD.MM)
             var cw = W-p.l-p.r, ch = H-p.t-p.b;
             ctx.fillStyle = CC.bg; ctx.fillRect(0,0,W,H);
 
-            var rates = pts.filter(function(c){return c.rate_ml_h>0;}).map(function(c){return c.rate_ml_h;});
-            var hasEma = ema.ema_dev > 0.01 && ema.bootstrap >= 5;
+            var tsRange = spanS;
+            function xOf(ts) { return p.l + (ts - minTs) / tsRange * cw; }
+            function yOf(v)  { return p.t + (1-(v-yMin)/(yMax-yMin)) * ch; }
+
+            // Only points within the visible window
+            var visPts = pts.filter(function(c) { return c.ts >= minTs; });
+
+            var rates = visPts.filter(function(c){return c.rate_ml_h>0;}).map(function(c){return c.rate_ml_h;});
+            var hasEma = ema.ema_dev > 0.01 && ema.bootstrap >= 3;
             var yMin=0, yMax=100;
             if (rates.length) { yMin=Math.min.apply(null,rates); yMax=Math.max.apply(null,rates); }
             if (hasEma) {
@@ -1782,14 +1767,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             var rpad=(yMax-yMin)*0.18||yMax*0.18||5;
             yMin=Math.max(0,yMin-rpad); yMax+=rpad;
 
-            // Time-based x positioning
-            var minTs = pts.length ? pts[0].ts : 0;
-            var maxTs = pts.length ? pts[pts.length-1].ts : 1;
-            var tsRange = Math.max(maxTs - minTs, 1);
-            function xOf(i){ return p.l + (pts[i].ts - minTs) / tsRange * cw; }
-            function yOf(v){ return p.t + (1-(v-yMin)/(yMax-yMin)) * ch; }
-
-            // Faint grid lines (no numbers)
+            // Faint horizontal grid lines
             ctx.strokeStyle=CC.grid; ctx.lineWidth=0.5;
             for (var gi=0; gi<=4; gi++){
                 var gy=p.t+ch*gi/4;
@@ -1802,7 +1780,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 var yRt=yOf(ema.ema_rate+rD), yRb=yOf(Math.max(yMin,ema.ema_rate-rD));
                 var yYt=yOf(ema.ema_rate+yD), yYb=yOf(Math.max(yMin,ema.ema_rate-yD));
 
-                // Colored bands
                 ctx.fillStyle=CC.bandR;
                 ctx.fillRect(p.l, p.t,  cw, yRt-p.t);
                 ctx.fillRect(p.l, yRb,  cw, p.t+ch-yRb);
@@ -1812,7 +1789,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 ctx.fillStyle=CC.bandG;
                 ctx.fillRect(p.l, yYt,  cw, yYb-yYt);
 
-                // Boundary value labels ON band edges — all grey
                 ctx.font='bold 10px sans-serif'; ctx.textAlign='left';
                 function drawBoundLabel(yPos, val) {
                     if (yPos < p.t || yPos > p.t+ch) return;
@@ -1824,7 +1800,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 drawBoundLabel(yYt, ema.ema_rate+yD);
                 drawBoundLabel(yYb, Math.max(0, ema.ema_rate-yD));
 
-                // EMA line — starts after label text
                 var ye = yOf(ema.ema_rate);
                 var emaLbl = 'EMA ' + fmtV(ema.ema_rate);
                 ctx.font='bold 10px sans-serif';
@@ -1839,62 +1814,53 @@ const char* DASHBOARD_HTML = R"rawliteral(
             // Data line
             ctx.strokeStyle='rgba(148,163,184,0.28)'; ctx.lineWidth=1.5;
             ctx.beginPath(); var first=true;
-            for (var i=0; i<pts.length; i++) {
-                if (pts[i].rate_ml_h<=0) continue;
-                var x=xOf(i), y=yOf(pts[i].rate_ml_h);
+            for (var i=0; i<visPts.length; i++) {
+                if (visPts[i].rate_ml_h<=0) continue;
+                var x=xOf(visPts[i].ts), y=yOf(visPts[i].rate_ml_h);
                 if (first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);
             }
             ctx.stroke();
 
-            // Data points — grey, slightly darker than line
-            for (var i=0; i<pts.length; i++) {
-                if (pts[i].rate_ml_h<=0) continue;
-                ctx.beginPath(); ctx.arc(xOf(i),yOf(pts[i].rate_ml_h),4,0,Math.PI*2);
+            // Data points
+            for (var i=0; i<visPts.length; i++) {
+                if (visPts[i].rate_ml_h<=0) continue;
+                ctx.beginPath(); ctx.arc(xOf(visPts[i].ts),yOf(visPts[i].rate_ml_h),4,0,Math.PI*2);
                 ctx.fillStyle='rgba(100,116,139,0.85)'; ctx.fill();
             }
 
-            drawTimeAxis(ctx, pts, W, H, p);
-            if (!pts.length) {
+            drawTimeAxisScrollable(ctx, minTs, maxTs, W, H, p);
+
+            if (!visPts.length) {
                 ctx.fillStyle=CC.txt; ctx.font='13px sans-serif'; ctx.textAlign='center';
-                ctx.fillText('No data yet',W/2,H/2);
+                ctx.fillText('No data yet', W/2, H/2);
             }
+
+            // Jump to latest data (right edge) on load
+            scrollEl.scrollLeft = scrollEl.scrollWidth;
         }
 
-        function drawIntervalChart(pts) {
-            var s = setupCanvas('chartInterval');
-            var ctx = s.ctx, W = s.W, H = s.H;
-            var p = {t:14, r:14, b:28, l:52};
-            var cw = W-p.l-p.r, ch = H-p.t-p.b;
-            ctx.fillStyle = CC.bg; ctx.fillRect(0,0,W,H);
+        function scrollRateChart(dir) {
+            var el = document.getElementById('chartRateScroll');
+            if (!el) return;
+            el.scrollTo({ left: el.scrollLeft + dir * el.offsetWidth * 0.5, behavior: 'smooth' });
+        }
 
-            var mins = pts.map(function(c){return c.interval_s/60;});
-            var yMax = mins.length ? Math.max.apply(null,mins)*1.15 : 60;
-            if (yMax<10) yMax=10;
-
-            function xOf(i){return p.l+(pts.length<=1?cw/2:i/(pts.length-1)*cw);}
-            function yOf(v){return p.t+(1-v/yMax)*ch;}
-
-            drawGrid(ctx, W, H, p, 0, yMax);
-
-            ctx.save(); ctx.translate(13, p.t+ch/2); ctx.rotate(-Math.PI/2);
-            ctx.fillStyle=CC.txt; ctx.font='11px sans-serif'; ctx.textAlign='center';
-            ctx.fillText('min',0,0); ctx.restore();
-
-            var bw = pts.length>1 ? Math.max(3, cw/pts.length*0.65) : 20;
-            for (var i=0; i<pts.length; i++) {
-                if (pts[i].interval_s<=0) continue;
-                var x=xOf(i), y=yOf(mins[i]);
-                ctx.globalAlpha = pts[i].bootstrap ? 0.4 : 0.85;
-                ctx.fillStyle = ptColor(pts[i]);
-                ctx.fillRect(x-bw/2, y, bw, p.t+ch-y);
-            }
-            ctx.globalAlpha=1;
-
-            drawXLabels(ctx, pts, W, H, p);
-            if (!pts.length) {
-                ctx.fillStyle=CC.txt; ctx.font='13px sans-serif'; ctx.textAlign='center';
-                ctx.fillText('No data yet',W/2,H/2);
-            }
+        function deleteCycleHistory() {
+            if (!confirm("Delete all cycle history and EMA data?\nThis cannot be undone.")) return;
+            var btn = document.getElementById("deleteCyclesBtn");
+            btn.disabled = true; btn.textContent = "Deleting...";
+            secureFetch("api/clear-cycle-history", { method: "POST" })
+                .then(function(r) { return r ? r.json() : null; })
+                .then(function(data) {
+                    if (data && data.success) {
+                        var cv = document.getElementById('chartRate');
+                        if (cv) { var ctx = cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height); }
+                    } else {
+                        alert("Delete failed: " + (data && data.error ? data.error : "unknown error"));
+                    }
+                })
+                .catch(function(e) { console.error("Delete cycles error:", e); })
+                .finally(function() { btn.disabled=false; btn.textContent="Delete Data"; });
         }
 
         function loadCycleHistory() {
@@ -1912,10 +1878,177 @@ const char* DASHBOARD_HTML = R"rawliteral(
                         yellow_sigma: data.yellow_sigma || 150, red_sigma: data.red_sigma || 250
                     };
                     drawRateChart(pts, ema);
-                    drawIntervalChart(pts);
                 })
                 .catch(function(e) { console.error("Load cycles error:", e); })
                 .finally(function() { btn.disabled=false; btn.textContent="Load History"; });
+        }
+
+        // ============================================
+        // KALKWASSER
+        // ============================================
+
+        function updateKalkSchedule(rtcTs, lastMixTs, lastDoseTs, kalkState, kalkEnabled, kalkAlarm) {
+            var wrap = document.getElementById('kalkScheduleWrap');
+            if (!wrap) return;
+            // Always fully visible
+
+            var banner = document.getElementById('kalkAlarmBanner');
+            if (banner) banner.style.display = (kalkEnabled && kalkAlarm) ? '' : 'none';
+
+            var now = new Date(rtcTs * 1000);
+            var nowH = now.getHours();
+            var nowTotalMin = nowH * 60 + now.getMinutes();
+
+            function sameDay(ts) {
+                if (!ts) return false;
+                var d = new Date(ts * 1000);
+                return d.getDate() === now.getDate() &&
+                       d.getMonth() === now.getMonth() &&
+                       d.getFullYear() === now.getFullYear();
+            }
+
+            function setTile(id, cls) {
+                var el = document.getElementById(id);
+                if (el) el.className = 'kalk-tile kalk-ev-' + cls;
+            }
+
+            // Mix slots: base hours [0,6,12,18] at :15
+            var MIX_BASES = [0, 6, 12, 18];
+            MIX_BASES.forEach(function(base, i) {
+                var slotMin = base * 60 + 15;
+                var mixDone = false;
+                if (lastMixTs && sameDay(lastMixTs)) {
+                    var lh = new Date(lastMixTs * 1000).getHours();
+                    if (lh >= base && lh < base + 6) mixDone = true;
+                }
+                var isMixState = (kalkState === 'KALK_MIXING' || kalkState === 'KALK_SETTLING' ||
+                                  kalkState === 'KALK_WAIT_TOPOFF_MIX');
+                var isNowSlot = (nowTotalMin >= slotMin && nowTotalMin < slotMin + 360);
+                var cls;
+                if (mixDone)                        cls = 'done';
+                else if (isMixState && isNowSlot)   cls = 'active';
+                else if (slotMin > nowTotalMin)      cls = 'pending';
+                else                                cls = 'missed';
+                setTile('kalkMix' + i, cls);
+            });
+
+            // Dose slots: 02-05, 08-11, 14-17, 20-23
+            var DOSE_HOURS = [2,3,4,5,8,9,10,11,14,15,16,17,20,21,22,23];
+            var isDosing = (kalkState === 'KALK_DOSING' || kalkState === 'KALK_WAIT_TOPOFF_DOSE');
+            var lastDoseHour = -1;
+            if (lastDoseTs && sameDay(lastDoseTs)) {
+                lastDoseHour = new Date(lastDoseTs * 1000).getHours();
+            }
+            DOSE_HOURS.forEach(function(h, i) {
+                var cls;
+                if (lastDoseHour === h)          cls = 'done';
+                else if (isDosing && nowH === h) cls = 'active';
+                else if (h > nowH)               cls = 'pending';
+                else                             cls = 'missed';
+                setTile('kalkDose' + i, cls);
+            });
+        }
+
+        function startKalkCalibration() {
+            var btn = document.getElementById('kalkCalibBtn');
+            btn.disabled = true; btn.textContent = 'Running 30s...';
+            secureFetch('api/kalkwasser-calibrate', { method: 'POST' })
+                .then(function(r) { return r ? r.json() : null; })
+                .then(function(data) {
+                    if (data && data.success) {
+                        btn.textContent = 'Done! Measure now.';
+                    } else {
+                        alert('Calibration failed: ' + (data && data.error ? data.error : 'pump busy'));
+                        btn.disabled = false; btn.textContent = 'Start Calibration (30s)';
+                    }
+                })
+                .catch(function() { btn.disabled = false; btn.textContent = 'Start Calibration (30s)'; });
+            setTimeout(function() {
+                btn.disabled = false; btn.textContent = 'Start Calibration (30s)';
+            }, 35000);
+        }
+
+        function saveKalkFlowRate() {
+            var ml = parseFloat(document.getElementById('kalkMeasuredMl').value);
+            if (!ml || ml <= 0) { alert('Enter measured volume in ml'); return; }
+            secureFetch('api/kalkwasser-flow-rate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'measured_ml=' + ml
+            })
+            .then(function(r) { return r ? r.json() : null; })
+            .then(function(data) {
+                var st = document.getElementById('kalkFlowStatus');
+                if (data && data.success) {
+                    var fr = data.flow_rate_ul_s || 0;
+                    st.textContent = fr > 0 ? 'Current: ' + (fr / 1000).toFixed(3) + ' ml/s' : 'Current: —';
+                } else {
+                    st.textContent = 'Save failed';
+                }
+            });
+        }
+
+        var kalkIsEnabled = false;
+
+        function updateKalkButton(enabled) {
+            kalkIsEnabled = enabled;
+            var btn = document.getElementById('kalkwasserBtn');
+            if (!btn) return;
+            if (enabled) {
+                btn.className = 'btn btn-kalk-on';
+                btn.textContent = 'Kalkwasser ON';
+            } else {
+                btn.className = 'btn btn-kalk-off';
+                btn.textContent = 'Kalkwasser OFF';
+            }
+        }
+
+        function toggleKalkwasser() {
+            secureFetch('api/kalkwasser-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'enabled=' + (kalkIsEnabled ? 0 : 1)
+            })
+            .then(function(r) { return r ? r.json() : null; })
+            .then(function(data) {
+                if (data && data.success) updateKalkButton(!!data.enabled);
+            });
+        }
+
+        function saveKalkConfig() {
+            var dose = parseInt(document.getElementById('kalkDailyDose').value) || 0;
+            secureFetch('api/kalkwasser-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'enabled=' + (kalkIsEnabled ? 1 : 0) + '&daily_dose_ml=' + dose
+            })
+            .then(function(r) { return r ? r.json() : null; })
+            .then(function(data) {
+                var st = document.getElementById('kalkDoseStatus');
+                if (data && data.success) {
+                    st.textContent = (kalkIsEnabled ? 'Enabled' : 'Disabled') + ', ' + dose + ' ml/day';
+                } else {
+                    st.textContent = 'Save failed';
+                }
+            });
+        }
+
+        function loadKalkConfig() {
+            secureFetch('api/kalkwasser-config')
+                .then(function(r) { return r ? r.json() : null; })
+                .then(function(data) {
+                    if (!data || !data.success) return;
+                    updateKalkButton(!!data.enabled);
+                    document.getElementById('kalkDailyDose').value = data.daily_dose_ml || 0;
+                    var fr = data.flow_rate_ul_per_s || 0;
+                    document.getElementById('kalkFlowStatus').textContent =
+                        fr > 0 ? 'Current: ' + (fr / 1000).toFixed(3) + ' ml/s' : 'Current: not calibrated';
+                    if (fr > 0) {
+                        document.getElementById('kalkMeasuredMl').placeholder = (fr / 1000 * 30).toFixed(1);
+                    }
+                    document.getElementById('kalkDoseStatus').textContent =
+                        (data.enabled ? 'Enabled' : 'Disabled') + ', ' + (data.daily_dose_ml || 0) + ' ml/day';
+                });
         }
 
         // ============================================
@@ -1934,6 +2067,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         loadVolumePerSecond();
         loadDailyVolume();
         loadAvailableVolume();
+        loadKalkConfig();
     </script>
 </body>
 </html>

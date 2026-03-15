@@ -1,8 +1,8 @@
 # Plan wdrożenia — top_off_water_doser-iot
 
 Projekt łączy dwa systemy w jednym firmware na Seeed XIAO ESP32-C3:
-- **Top-off** — dolewanie wody z detekcją czujnika pływakowego (para równoległa)
-- **Doser** — dozowanie nawozów dwoma niezależnymi pompami (2 kanały)
+- **Top-off (ATO)** — automatyczne dolewanie wody z detekcją czujnika pływakowego
+- **Kalkwasser** — dozowanie wapna (CaCO₃) pompą perystaltyczną + pompą mieszającą
 
 ---
 
@@ -25,25 +25,25 @@ Projekt łączy dwa systemy w jednym firmware na Seeed XIAO ESP32-C3:
                          [USB-C]
 ```
 
-### Przypisanie pinów
+### Przypisanie pinów (aktualne)
 
-| GPIO | Oznaczenie | Funkcja | Uwagi |
-|------|-----------|---------|-------|
-| GPIO 2  | D0       | `ERROR_SIGNAL_PIN` — sygnalizacja błędu | Active HIGH, buzzer/LED |
-| GPIO 3  | D1       | `WATER_SENSOR_PIN` — czujnik pływakowy (para równoległa) | INPUT_PULLUP, active LOW |
-| GPIO 4  | D2       | **WOLNY** — GPIO 4 zwolniony (drugi czujnik wyeliminowany) | rezerwa |
-| GPIO 5  | D3       | `DOSE_RELAY_PIN_CH1` — pompa dozująca A | Active HIGH, relay OUT |
-| GPIO 6  | D4/SDA   | `I2C_SDA_PIN` — szyna I2C | DS3231 RTC + FRAM MB85RC256V |
-| GPIO 7  | D5/SCL   | `I2C_SCL_PIN` — szyna I2C | |
-| GPIO 8  | D8/BOOT  | `RESET_PIN` — przycisk resetu/provisioning | INPUT_PULLUP, hold 5s → provisioning |
-| GPIO 9  | D9/MISO  | `DOSE_RELAY_PIN_CH2` — pompa dozująca B | Active HIGH, relay OUT |
-| GPIO 10 | D10/MOSI | `PUMP_RELAY_PIN` — pompa top-off | Active HIGH, relay OUT |
-| GPIO 20 | D7/RX    | **WOLNY** (rezerwa) | Unikać — UART debug |
-| GPIO 21 | D6/TX    | **WOLNY** (rezerwa) | Unikać — UART debug |
+| GPIO | Oznaczenie | Stała | Funkcja | Uwagi |
+|------|-----------|-------|---------|-------|
+| GPIO 3  | D1  | `MIXING_PUMP_RELAY_PIN`      | Pompa mieszająca kalkwasser | Active HIGH, relay |
+| GPIO 4  | D2  | `RESERVE_PUMP_RELAY_PIN`     | Rezerwa (wolna)             | Active HIGH |
+| GPIO 5  | D3  | `RESET_PIN`                  | Przycisk resetu / provisioning | INPUT_PULLUP, hold 5s → provisioning |
+| GPIO 6  | D4/SDA | `I2C_SDA_PIN`             | Szyna I2C                   | DS3231 RTC + FRAM MB85RC256V |
+| GPIO 7  | D5/SCL | `I2C_SCL_PIN`             | Szyna I2C                   | |
+| GPIO 8  | D8  | `ERROR_SIGNAL_PIN`           | Sygnalizacja błędów         | HIGH = aktywny, buzzer/LED |
+| GPIO 9  | D9  | `WATER_SENSOR_PIN`           | Czujnik pływakowy ATO       | INPUT_PULLUP, active LOW |
+| GPIO 10 | D10 | `PERYSTALTIC_PUMP_DRIVER_PIN`| Pompa perystaltyczna kalkwasser | TMC2209 STEP via LEDC |
+| GPIO 21 | D6  | `ATO_PUMP_RELAY_PIN`         | Pompa top-off ATO           | **Active LOW** (LOW = ON) |
 
-> **Czujniki równolegle:** Dwa czujniki pływakowe na tym samym poziomie połączone równolegle
-> do jednego pinu GPIO 3. Logika: LOW = woda poniżej poziomu (którykolwiek czujnik reaguje).
-> Redundancja sprzętowa — awaria jednego czujnika nie blokuje systemu.
+> **GPIO 2 zwolniony** — był poprzednim ATO_PUMP_RELAY_PIN; ADC1_CH2 koliduje z WiFi
+> przez periman (ESP32-C3) → digitalWrite fail podczas transmisji WiFi. Przeniesiono na GPIO21.
+
+> **Czujnik równoległy:** Czujnik pływakowy na jednym pinie GPIO 9.
+> Logika: LOW = woda poniżej poziomu, HIGH = poziom OK.
 
 ### Topologia I2C
 
@@ -57,289 +57,143 @@ GPIO7 (SCL) ──┤              │
 
 ---
 
-## 2. Algorytm top-off — zmiany
+## 2. Algorytm top-off (ATO)
 
-### 2.1 Debouncing czujnika (uproszczony)
-
-**Usunięte** z obecnego kodu: `PRE_QUALIFICATION`, `SETTLING_TIME`, `TOTAL_DEBOUNCE_TIME`.
-
-**Pozostaje:**
-- `DEBOUNCE_INTERVAL_MS = 200` — okres jednego próbkowania
-- `DEBOUNCE_COUNTER = 5` — liczba kolejnych zgodnych odczytów wymagana do zmiany stanu
-- Efektywny czas debounce = `200 ms × 5 = 1000 ms`
-
-Parametry są stałymi czasu kompilacji w `algorithm_config.h` — nie konfigurowalne przez użytkownika.
-
-**RELEASE VERIFICATION** — pozostaje, dotyczy jednego pinu (GPIO 3):
-- `RELEASE_CHECK_INTERVAL_MS = 500` — co ile sprawdzać podczas pompowania
-- `RELEASE_DEBOUNCE_COUNT = 3` — ile kolejnych HIGH wymagane do zatrzymania pompy
-
-**Logika debounce:**
-```
-Każde DEBOUNCE_INTERVAL_MS:
-  odczytaj GPIO 3
-  jeśli LOW (woda poniżej poziomu):
-    counter++
-  else:
-    counter = 0  ← reset przy niestabilnym sygnale
-  jeśli counter >= DEBOUNCE_COUNTER:
-    → onDebounceComplete() → startuj pompę
-```
-
-### 2.2 Dynamiczne dozowanie (Wariant B + timeout)
-
-Pompa nie pracuje przez stały czas — pracuje **aż czujnik wróci do HIGH**.
+### 2.1 Maszyna stanów
 
 ```
-FLOW:
-  1. Czujnik → stabilnie LOW (po debounce)
-  2. Sprawdź rolling 24h — jeśli >= limit → ERROR_DAILY_LIMIT, abort
-  3. Uruchom pompę (max czas = max_dose_ml / flow_rate_ml_s)
-  4. Czekaj na czujnik HIGH × RELEASE_DEBOUNCE_COUNT  ←── warunek stopu
-     LUB upłynął MAX_DOSE_TIME_S                       ←── bezpiecznik
-  5. Zatrzymaj pompę
-  6. Oblicz faktyczną objętość: volume_ml = duration_s × flow_rate_ml_s
-  7. Zapisz TopOffRecord do FRAM
-  8. Zaktualizuj EMA i cache rolling 24h
-  9. Jeśli timeout → flaga FLAG_TIMEOUT → alarm
+STATE_IDLE
+  → (czujnik LOW × DEBOUNCE_COUNTER) →
+STATE_DEBOUNCING [obsługiwany przez water_sensors]
+  → onDebounceComplete() →
+STATE_PUMPING (stała dawka dose_ml, czas = dose_ml / flow_rate)
+  → (czas upłynął) →
+STATE_LOGGING (5s — zapis do FRAM, obliczenie EMA)
+  → STATE_IDLE
+
+STATE_PUMPING → (przekroczono daily_limit_ml) → STATE_ERROR
+STATE_PUMPING → (dev_rate_sigma > rate_red_sigma) → STATE_ERROR
+STATE_* → handleDirectPumpOn() → STATE_MANUAL_OVERRIDE
 ```
 
-**Parametry (konfigurowane przez użytkownika, przechowywane w FRAM):**
+### 2.2 Algorytm stałej dawki
 
-| Parametr | Rola | Zakres | Domyślna |
-|----------|------|--------|---------|
-| `max_dose_ml` | Górny limit bezpieczeństwa jednej dolewki; gdy przekroczony → timeout + alarm | 50–2000 ml | 300 ml |
-| `flow_rate_ml_s` | Wydajność pompy top-off [ml/s] z kalibracji | kalibracja w GUI | konfigurowalny |
+Pompa pracuje przez **stały czas** wynikający z konfiguracji:
 
-`MAX_DOSE_TIME_S` wyliczany dynamicznie: `max_dose_ml / flow_rate_ml_s` (nie hardkodowany).
+```
+dose_time_s = dose_ml / flow_rate_ml_s
+```
 
-### 2.3 Struktura rekordu dolewki — `TopOffRecord`
+Parametry przechowywane w FRAM (`TopOffConfig`):
+- `dose_ml` — stała dawka na jeden cykl [ml], domyślnie 150 ml
+- `daily_limit_ml` — limit bezpieczeństwa na 24h [ml], domyślnie 2000 ml
+- `ema_alpha` — współczynnik EMA [0.10–0.40], domyślnie 0.20
+- `flow_rate_ml_s` — kalibracja pompy [ml/s] (przechowywana osobno)
 
-Rozmiar: **20 bajtów / rekord** (zweryfikowane `static_assert`).
+### 2.3 Debouncing czujnika
+
+- `DEBOUNCE_INTERVAL_MS = 200` — okres próbkowania
+- `DEBOUNCE_COUNTER = 5` — wymagane kolejne odczyty LOW
+- Efektywny czas: 200 ms × 5 = **1000 ms**
+
+### 2.4 Struktura rekordu dolewki — `TopOffRecord` (20 bajtów)
 
 ```cpp
 struct TopOffRecord {
-    uint32_t timestamp;       // Unix UTC z DS3231 RTC              [offset 0]
-    uint32_t interval_s;      // Czas od poprzedniej dolewki [s]    [offset 4]
-    float    rate_ml_h;       // Tempo zużycia wody [ml/h]          [offset 8]
-    uint16_t volume_ml;       // Faktyczna objętość = duration × flow_rate  [offset 12]
-    int8_t   dev_volume_pct;  // Odchylenie obj. od EMA [%], -127..+127    [offset 14]
-    int8_t   dev_rate_pct;    // Odchylenie rate od EMA [%]                [offset 15]
-    uint8_t  alert_level;     // 0 = OK, 1 = ŻÓŁTY, 2 = CZERWONY          [offset 16]
-    uint8_t  flags;           // Bitmaska flag                             [offset 17]
-    uint8_t  _pad[2];         // Wyrównanie do wielokrotności 4B           [offset 18]
+    uint32_t timestamp;      // Unix UTC z DS3231
+    uint32_t interval_s;     // Czas od poprzedniej dolewki [s]
+    float    rate_ml_h;      // Tempo zużycia wody [ml/h]
+    uint16_t cycle_num;      // Sekwencyjny numer cyklu
+    int8_t   dev_rate_sigma; // Odchylenie tempa w jednostkach sigma
+    uint8_t  alert_level;    // 0=OK, 1=żółty, 2=czerwony
+    uint8_t  hour_of_day;    // Godzina lokalna (0–23)
+    uint8_t  flags;          // FLAG_MANUAL=0x01, FLAG_BOOTSTRAP=0x02,
+                             // FLAG_DAILY_LIM=0x04, FLAG_RED_ALERT=0x08
+    uint8_t  _pad[2];
 };
 // sizeof = 20 — static_assert verified
-
-// flags bitmask:
-// bit 0 — FLAG_MANUAL    (dolewka wyzwolona ręcznie z GUI)
-// bit 1 — FLAG_TIMEOUT   (pompa zatrzymana przez timeout)
-// bit 2 — FLAG_BOOTSTRAP (rekord z okresu budowania historii EMA)
 ```
 
-### 2.4 Ring buffer — okno czasowe 24–48h
-
-Klasyczny ring buffer z write pointer. Aktywne przy obliczaniu metryk są tylko rekordy
-z `timestamp > now - history_window_s`.
+### 2.5 Ring buffer historii
 
 | Parametr | Wartość |
 |----------|---------|
 | `TOPOFF_HISTORY_SIZE` | 60 slotów |
-| `FRAM_TOPOFF_RECORD_SIZE` | 20 bajtów |
-| Rozmiar w FRAM | 60 × 20 B = **1200 bajtów** |
-| `history_window_s` | 86400 (24h) domyślnie; konfigurowalne: 86400 / 129600 / 172800 |
+| Rozmiar rekordu | 20 bajtów |
+| Rozmiar w FRAM | 60 × 20 B = 1200 B |
+| `history_window_s` | 86400 (24h) domyślnie |
 
-Gdy buffer pełny → nadpisywany najstarszy rekord (write pointer mod 60).
+Gdy buffer pełny → nadpisywany najstarszy rekord.
 
-### 2.5 Metryki trendów — EMA + odchylenia
+### 2.6 EMA — metryki trendów
 
-Obliczane **po każdej dolewce**, persystowane w FRAM (blok EMA).
-
-#### EMA — Exponential Moving Average
-
-```
-EMA_nowa = α × wartość_bieżąca + (1 - α) × EMA_poprzednia
-```
-
-Trzy niezależne EMA (float, persystowane w FRAM):
-- `ema_volume_ml` — typowa objętość dolewki
+Trzy niezależne EMA persystowane w FRAM (`EmaBlock`, 16 bajtów):
+- `ema_rate_ml_h` — typowe tempo zużycia wody
 - `ema_interval_s` — typowy czas między dolewkami
-- `ema_rate_ml_h` — typowe tempo zużycia wody [ml/h]
+- `ema_dev_ml_h` — EMA absolutnych odchyleń (podstawa progów dynamicznych)
 
-**Współczynnik α** — konfigurowany przez użytkownika, zakres **0.10–0.40**, domyślnie 0.20.
-
-Interpretacja α:
-- 0.10 → wolna adaptacja, wygładza krótkotrwałe skoki (norma stabilna)
-- 0.20 → balans — reaguje po ~5 zdarzeniach
-- 0.40 → szybka adaptacja (zmienne warunki, częste zmiany trybu)
-
-**Bootstrap:** Pierwsze `DEFAULT_MIN_BOOTSTRAP = 5` zdarzeń budują EMA bez alertów.
-GUI może informować: "Budowanie historii: 3/5". Rekordy z tego okresu mają flagę `FLAG_BOOTSTRAP`.
-
-#### Odchylenia procentowe
-
-```
-dev_volume_pct = (volume_ml - ema_volume_ml) / ema_volume_ml × 100
-dev_rate_pct   = (rate_ml_h - ema_rate_ml_h) / ema_rate_ml_h × 100
-```
-
-Wynik zaciskany do zakresu `int8_t` (-127..+127) przez `clampDevPct()`.
-
-#### Poziomy alertów — dwa niezależne wymiary
-
-Progi konfigurowane przez użytkownika (provisioning + GUI):
-
-| Wskaźnik | ZIELONY | ŻÓŁTY | CZERWONY |
-|----------|---------|-------|---------|
-| `dev_volume_pct` | < `vol_yellow_pct` | `vol_yellow_pct` – `vol_red_pct` | > `vol_red_pct` |
-| `dev_rate_pct` | < `rate_yellow_pct` | `rate_yellow_pct` – `rate_red_pct` | > `rate_red_pct` |
-
-Domyślne wartości progów:
-
-| Parametr | Domyślna | Zakres konfiguracji |
-|----------|---------|-------------------|
-| `vol_yellow_pct` | 30% | 10–80% |
-| `vol_red_pct` | 60% | 20–150% |
-| `rate_yellow_pct` | 40% | 10–100% |
-| `rate_red_pct` | 80% | 20–200% |
-
-Końcowy `alert_level = max(alert_volume, alert_rate)`.
-Niezależnie: `FLAG_TIMEOUT` zawsze skutkuje poziomem CZERWONY.
-
-#### Blok EMA w FRAM — persystencja przez restart
-
-```cpp
-struct EmaBlock {           // sizeof = 16 — static_assert verified
-    float   ema_volume_ml;    // 4B
-    float   ema_interval_s;   // 4B
-    float   ema_rate_ml_h;    // 4B
-    uint8_t bootstrap_count;  // 1B — liczba zebranych dolewek (do DEFAULT_MIN_BOOTSTRAP)
-    uint8_t _pad[3];          // 3B — wyrównanie
-};
-```
+**Bootstrap:** Pierwsze `DEFAULT_MIN_BOOTSTRAP = 3` cykle nie generują alertów.
+Rekordy z okresu bootstrap mają ustawiony flag `FLAG_BOOTSTRAP`.
 
 ---
 
-## 3. Konfiguracja parametrów — Provisioning + GUI
+## 3. Kalkwasser — dozowanie
 
-### Zasada: defaults w kodzie, nadpisania w FRAM
+### 3.1 Klasa `KalkwasserScheduler`
 
+Plik: `src/algorithm/kalkwasser_scheduler.h/.cpp`
+Instancja globalna: `kalkwasserScheduler`
+
+### 3.2 Harmonogram mieszania (pompa mieszająca)
+
+4× dziennie, o **00:15, 06:15, 12:15, 18:15** (czas lokalny):
+- Czas mieszania: `KALK_MIX_DURATION_S = 300 s (5 min)`
+- Czas osiadania po mieszaniu: `KALK_SETTLE_S = 3600 s (1h)`
+- Mieszanie jest pomijane jeśli trwa cykl ATO (max czekanie: 10 min)
+
+### 3.3 Harmonogram dozowania (pompa perystaltyczna)
+
+Co pełną godzinę za wyjątkiem zablokowanych okien:
+- **Dozowanie aktywne:** godziny 02–05, 08–11, 14–17, 20–23 → **16 dawek/dobę**
+- Dozowanie jest pomijane gdy trwa cykl ATO lub mieszanie (1h po mix)
+
+Czas pojedynczego dozowania obliczany z:
 ```
-Przy starcie systemu:
-  1. Odczytaj TopOffConfig z FRAM
-  2. Jeśli is_configured == 0xA5 (TOPOFF_CONFIG_MAGIC) → użyj wartości z FRAM
-  3. Jeśli nie → użyj wartości domyślnych z algorithm_config.h
-```
-
-Domyślne wartości są zawsze w kodzie (`algorithm_config.h`). FRAM przechowuje tylko
-to, co użytkownik świadomie zmienił. Aktualizacja firmware dostarcza nowe wartości
-domyślne bez potrzeby migracji FRAM.
-
-### Pre-fill w provisioning
-
-Formularz captive portal zawsze pokazuje **aktualne wartości działające w systemie**
-(FRAM jeśli istnieje, kod jeśli nie):
-
-| Pole | Źródło wartości w input | Uwaga |
-|------|------------------------|-------|
-| WiFi SSID | FRAM jeśli istnieje, pusty jeśli nie | |
-| WiFi hasło | **nigdy** — zawsze puste | Puste = zostaw bez zmian |
-| Hasło admina | **nigdy** — zawsze puste | Puste = zostaw bez zmian |
-| Nazwa urządzenia | FRAM jeśli istnieje, pusty jeśli nie | |
-| `max_dose_ml` | FRAM jeśli istnieje, **domyślna z kodu** jeśli nie | |
-| `ema_alpha` | FRAM jeśli istnieje, **domyślna z kodu** jeśli nie | |
-| Progi alertów | FRAM jeśli istnieje, **domyślne z kodu** jeśli nie | |
-| `history_window_s` | FRAM jeśli istnieje, **domyślna z kodu** jeśli nie | |
-
-### Domyślne wartości w kodzie (`algorithm_config.h`)
-
-```cpp
-// Debouncing — stałe czasu kompilacji (nie w FRAM)
-#define DEBOUNCE_INTERVAL_MS     200   // ms między próbkowaniami
-#define DEBOUNCE_COUNTER           5   // kolejnych LOW wymaganych (= 1000 ms efektywnie)
-#define RELEASE_CHECK_INTERVAL_MS  500
-#define RELEASE_DEBOUNCE_COUNT       3
-
-// Domyślne wartości konfiguracji (mogą być nadpisane przez FRAM)
-#define DEFAULT_MAX_DOSE_ML         300     // limit bezpieczeństwa jednej dolewki [ml]
-#define DEFAULT_EMA_ALPHA          0.20f    // zakres: 0.10–0.40
-#define DEFAULT_VOL_YELLOW_PCT       30     // [%]
-#define DEFAULT_VOL_RED_PCT          60     // [%]
-#define DEFAULT_RATE_YELLOW_PCT      40     // [%]
-#define DEFAULT_RATE_RED_PCT         80     // [%]
-#define DEFAULT_HISTORY_WINDOW_S  86400     // [s] = 24h
-#define DEFAULT_MIN_BOOTSTRAP         5     // min dolewek przed aktywacją alertów
+dose_duration_s = (daily_dose_ml × 1000 / KALK_DOSES_PER_DAY) / flow_rate_ul_per_s
 ```
 
-### Dwupoziomowy dostęp do parametrów
-
-| Parametr | Provisioning | GUI (dashboard) |
-|----------|:---:|:---:|
-| WiFi SSID | ✓ | — |
-| WiFi hasło | ✓ | — |
-| Hasło admina | ✓ | — |
-| Nazwa urządzenia | ✓ | — |
-| `max_dose_ml` | ✓ | ✓ |
-| `ema_alpha` | ✓ | ✓ |
-| `vol_yellow_pct` / `vol_red_pct` | ✓ | ✓ |
-| `rate_yellow_pct` / `rate_red_pct` | ✓ | ✓ |
-| `history_window_s` | ✓ | ✓ |
-| Kalibracja pompy top-off (`flow_rate_ml_s`) | — | ✓ |
-| Konfiguracja kanałów dosera | — | ✓ |
-
-### API endpoints — aktualne (zaimplementowane)
+### 3.4 Stany `KalkwasserState`
 
 ```
-GET  /api/status              → stan systemu (sensor, pompa, RTC, WiFi, EMA state)
-GET  /api/cycle-history       → ring buffer TopOffRecord (60 rekordów, newest-first)
-GET  /api/daily-volume        → rolling 24h stats (rolling_24h_ml, history_window_s, max_dose_ml)
-GET  /api/fill-water-max      → pobierz max_dose_ml
-POST /api/fill-water-max      → ustaw max_dose_ml (50–2000 ml)
-GET  /api/get-statistics      → statystyki błędów z FRAM (gap1, gap2, water fails)
-POST /api/reset-statistics    → zeruj statystyki błędów
-POST /api/pump/normal         → ręczna dolewka
-POST /api/pump/stop           → zatrzymaj pompę
-GET  /api/pump-settings       → konfiguracja pompy (volume_per_second, cycle times)
-POST /api/pump-settings       → zapisz konfigurację pompy
+KALK_IDLE
+  ↓ isMixTime && !mixDoneThisSlot
+KALK_WAIT_TOPOFF_MIX → (top-off gotowy) → KALK_MIXING (5 min)
+  → KALK_SETTLING (60 min) → KALK_IDLE
+
+KALK_IDLE
+  ↓ isDoseTime && !doseAlreadyDone
+KALK_WAIT_TOPOFF_DOSE → (top-off gotowy) → KALK_DOSING
+  → KALK_IDLE
+
+KALK_IDLE → startCalibration() → KALK_CALIBRATING (30s) → KALK_IDLE
 ```
 
-### API endpoints — planowane (TODO)
+### 3.5 Kalibracja
 
+Pompa perystaltyczna pracuje przez `KALK_CALIBRATION_S = 30 s`. Użytkownik mierzy
+wydaną objętość i wprowadza `measured_ml_30s` przez GUI. System przelicza:
 ```
-GET  /api/topoff/settings     → pełna TopOffConfig (alpha, progi, history_window_s)
-POST /api/topoff/settings     → zapisz TopOffConfig do FRAM
-GET  /api/topoff/status       → bieżący stan: EMA values, bootstrap_count, alert_level
-POST /api/topoff/calibrate    → start/stop kalibracji pompy (flow_rate_ml_s)
-GET  /api/dose/status         → stan kanałów dozownika
-POST /api/dose/manual         → ręczne wyzwolenie kanału
-GET  /api/dose/settings       → konfiguracja kanałów
-POST /api/dose/settings       → zapis konfiguracji
+flow_rate_ul_per_s = measured_ml_30s × 1000 / 30
 ```
+
+### 3.6 Alarm „brak top-off"
+
+Jeśli kalkwasser jest aktywny ale `rolling_24h_volume == 0` → alarm `noTopoffAlarm = true`.
+Wyświetlany w GUI, reset po wykryciu pierwszego cyklu ATO.
 
 ---
 
-## 4. Nowa funkcjonalność — Dosing System (2 kanały)
-
-### 4.1 Źródło
-
-Logika i GUI przeniesione z projektu `dosing_system-iot`, okrojone do **2 kanałów**:
-- `CHANNEL_COUNT = 2`
-- Kanał A → GPIO 5 (`DOSE_RELAY_PIN_CH1`)
-- Kanał B → GPIO 9 (`DOSE_RELAY_PIN_CH2`)
-
-### 4.2 Funkcje
-
-| Funkcja | Opis |
-|---------|------|
-| Harmonogram | Per kanał: bitmaska dni tygodnia + godzina |
-| Dozowanie manualne | Wyzwolenie z GUI, kanał + objętość |
-| Limity dobowe | Per kanał, reset RTC-based o 00:00 UTC |
-| Kalibracja pompy | Czas pracy → flow_rate [ml/s] per kanał |
-| Śledzenie pojemnika | Suma dozowań vs pojemność pojemnika |
-
----
-
-## 5. FRAM — layout pamięci (rzeczywiste adresy)
+## 4. FRAM — layout pamięci (rzeczywiste adresy)
 
 ```
 0x0000 – 0x0003   Magic number (4 B)
@@ -355,52 +209,115 @@ Logika i GUI przeniesione z projektu `dosing_system-iot`, okrojone do **2 kanał
 0x0510 – 0x0511   water_fail_sum (2 B)
 0x0512 – 0x0515   last_reset timestamp (4 B)
 0x0516 – 0x0517   stats checksum (2 B)
-0x0518 – 0x0519   daily_volume_ml — legacy (2 B)
-0x051A – 0x051D   last_reset_utc_day — legacy (4 B)
-0x051E – 0x051F   daily checksum — legacy (2 B)
-0x0520 – 0x0529   avail_vol_max + current — legacy, unused (10 B)
-0x052A – 0x052D   fill_water_max — legacy, unused (4 B)
-0x052E – 0x052F   fill_max checksum — legacy (2 B)
-0x0530 – 0x0531   cycle_count — legacy (2 B)
-0x0532 – 0x0533   cycle_index — legacy (2 B)
 
-0x0560 – 0x0573   TopOffConfig struct (20 B)  ← sizeof = 20, static_assert verified
+0x0560 – 0x0573   TopOffConfig struct (20 B)    ← sizeof = 20, magic = 0xA7
 0x0574 – 0x0575   TopOffConfig checksum (2 B)
 
-0x0580 – 0x058F   EmaBlock struct (16 B)      ← sizeof = 16, static_assert verified
+0x0580 – 0x058F   EmaBlock struct (16 B)        ← sizeof = 16
 0x0590 – 0x0591   EmaBlock checksum (2 B)
 
 0x0600 – 0x0601   TopOff record count (2 B)
 0x0602 – 0x0603   TopOff write pointer (2 B)
 0x0610 – 0x0AC0   TopOff ring buffer: 60 × 20 B = 1200 B
 
-0x1000 – ...      [RESERVED] Doser: konfiguracja kanałów CH1 + CH2
+0x0AC0 – 0x0AD3   KalkwasserConfig struct (20 B) ← magic = 0xCA
+0x0AD4 – 0x0AD5   KalkwasserConfig checksum (2 B)
 ```
 
 > Pełna lista stałych → `src/hardware/fram_controller.h`
 
 ---
 
-## 6. Kolejność implementacji
+## 5. Konfiguracja — Provisioning + GUI
 
-### ✅ Zrealizowane
+### Zasada: defaults w kodzie, nadpisania w FRAM
 
-1. **`hardware_pins.h`** — jeden `WATER_SENSOR_PIN` (GPIO 3), dodane `DOSE_RELAY_PIN_CH1/CH2`, przemianowane piny I2C
-2. **`algorithm_config.h`** — nowe parametry debounce, nowe struktury TopOffRecord/EmaBlock/TopOffConfig, stany, kody błędów
-3. **`water_sensors.h/cpp`** — uproszczone do jednego czujnika z prostym debouncingiem, callbacki do algorytmu
-4. **`water_algorithm.h/cpp`** — nowy algorytm: maszyna stanów (IDLE→DEBOUNCING→PUMPING→LOGGING), dynamiczne dozowanie, EMA, rolling 24h, persist do FRAM
-5. **`fram_controller.h/cpp`** — nowe sekcje FRAM: TopOffConfig, EmaBlock, ring buffer TopOffRecord z write pointer
-6. **`web_handlers.cpp`** — zaktualizowane handlery do nowego API (TopOffRecord history, rolling 24h, direct FRAM dla statystyk)
-7. **`rtc_controller.cpp`** — poprawka nazw pinów I2C
-8. **`main.cpp`** — dopasowanie do nowego API
+```
+Przy starcie systemu:
+  1. Odczytaj TopOffConfig z FRAM
+  2. Jeśli is_configured == 0xA7 (TOPOFF_CONFIG_MAGIC) → użyj wartości z FRAM
+  3. Jeśli nie → użyj wartości domyślnych z algorithm_config.h
+```
 
-### ⏳ Do zrealizowania
+### Pre-fill w provisioning
 
-9. **Provisioning** — dodanie drugiego kroku z parametrami algorytmu + pre-fill z FRAM
-10. **Web API `/api/topoff/settings`** — endpoint GET/POST dla pełnej TopOffConfig
-11. **Doser core** — portowanie `channel_manager` z `dosing_system-iot` (2 kanały)
-12. **Web API `/api/dose/*`** — endpointy dozownika
-13. **GUI** — dashboard: zakładki Top-Off | Historia | Doser A | Doser B; Chart.js dla EMA
+| Pole | Źródło wartości |
+|------|----------------|
+| WiFi SSID | FRAM jeśli istnieje, pusty jeśli nie |
+| WiFi hasło | **nigdy** — puste = bez zmian |
+| Hasło admina | **nigdy** — puste = bez zmian |
+| Nazwa urządzenia | FRAM jeśli istnieje, pusty jeśli nie |
+| `dose_ml`, `daily_limit_ml` | FRAM jeśli istnieje, domyślna z kodu jeśli nie |
+| `ema_alpha` | FRAM jeśli istnieje, domyślna z kodu jeśli nie |
+| Progi alertów | FRAM jeśli istnieje, domyślne z kodu jeśli nie |
+
+### Domyślne wartości (`algorithm_config.h`)
+
+```cpp
+#define DEFAULT_DOSE_ML             150     // stała dawka [ml]
+#define DEFAULT_DAILY_LIMIT_ML     2000     // limit dobowy [ml]
+#define DEFAULT_EMA_ALPHA          0.20f    // zakres: 0.10–0.40
+#define DEFAULT_RATE_YELLOW_SIGMA   150     // próg żółty (1.5× EMA_dev)
+#define DEFAULT_RATE_RED_SIGMA      250     // próg czerwony (2.5× EMA_dev)
+#define DEFAULT_HISTORY_WINDOW_S  86400     // okno historii = 24h
+#define DEFAULT_MIN_BOOTSTRAP         3     // min dolewek przed alertami
+```
+
+---
+
+## 6. API endpoints (zaimplementowane)
+
+### Autentykacja i sesja
+
+```
+POST /api/login              → zaloguj (cookie session_token)
+POST /api/logout             → wyloguj
+GET  /api/health             → status (bez sesji)
+```
+
+### System
+
+```
+GET  /api/status             → pełny stan systemu JSON
+POST /api/system-toggle      → włącz/wyłącz system (+ auto-re-enable 30 min)
+POST /api/system-reset       → reset maszyny stanów ATO
+```
+
+### ATO — pompa i historia
+
+```
+POST /api/pump/direct-on     → ręczne włączenie pompy (bypass algorytmu)
+POST /api/pump/direct-off    → ręczne wyłączenie
+POST /api/pump/stop          → zatrzymanie awaryjne
+GET  /api/pump-settings      → konfiguracja pompy (flow_rate, volume_per_second)
+POST /api/pump-settings      → zapis konfiguracji pompy
+GET  /api/cycle-history      → ring buffer TopOffRecord (60 rekordów, newest-first)
+POST /api/clear-cycle-history→ wyczyść ring buffer
+GET  /api/get-statistics     → statystyki błędów
+POST /api/reset-statistics   → zeruj statystyki
+```
+
+### Objętości i limity
+
+```
+GET  /api/daily-volume       → rolling 24h stats
+POST /api/reset-daily-volume → zeruj licznik dobowy
+GET  /api/available-volume   → dostępna objętość zbiornika
+POST /api/set-available-volume   → ustaw dostępną objętość
+POST /api/refill-available-volume→ uzupełnij zbiornik do max
+GET  /api/fill-water-max     → pobierz daily_limit_ml i dose_ml
+POST /api/set-fill-water-max → ustaw daily_limit_ml
+POST /api/set-dose           → ustaw dose_ml
+```
+
+### Kalkwasser
+
+```
+GET  /api/kalkwasser-config     → pobierz konfigurację kalkwasser
+POST /api/kalkwasser-config     → zapisz (enabled, daily_dose_ml)
+POST /api/kalkwasser-calibrate  → start/stop kalibracji perystaltyki
+POST /api/kalkwasser-flow-rate  → zapisz zmierzony przepływ (measured_ml)
+```
 
 ---
 
@@ -416,119 +333,13 @@ lib_deps =
     Adafruit FRAM I2C
 ```
 
+---
 
+## 8. Znane problemy i rozwiązania
 
-
-
-
-
-
-
-
-
-  Algorytm harmonogramu (RTC)
-
-  Inicjalizacja:
-    ledc_setup(freq, resolution)  ← częstotliwość = docelowe RPM, raz na starcie
-    ledc_write(duty=0)            ← silnik zatrzymany
-    EN = HIGH                     ← TMC2209 w trybie sleep
-
-  Harmonogram (callback co np. 1h lub na żądanie):
-    ┌─ oblicz ml_do_dozowania (na podstawie czujnika/harmonogramu)
-    ├─ przelicz czas_pracy = ml / przepływ_ml_per_s
-    ├─ EN = LOW              ← wybudź sterownik
-    ├─ delay 1ms             ← czas na inicjalizację TMC2209
-    ├─ ledc_write(duty=127)  ← START: LEDC generuje STEP automatycznie
-    ├─ odpal timer (one-shot, czas_pracy sekund)
-    └─ wróć do loop() [loop nic nie robi dla silnika!]
-
-  Callback timera (po czas_pracy):
-    ├─ ledc_write(duty=0)    ← STOP: brak pulsów
-    ├─ delay 1ms
-    ├─ EN = HIGH             ← TMC2209 sleep
-    └─ zapisz log (RTC timestamp, ml, status)
-
-  Pętla główna nie zawiera żadnego kodu silnika — tylko esp_timer (one-shot) i LEDC.
-
-  ---
-  Dlaczego nie millis()/micros() + loop()
-
-  ┌──────────────────┬────────┬────────────────┬──────────────────────────┐
-  │      Metoda      │ Jitter │ Obciążenie CPU │      Problem z WiFi      │
-  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
-  │ micros() w loop  │ duży   │ stały polling  │ kroки tracone podczas TX │
-  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
-  │ Timer przerwanie │ mały   │ minimalne ISR  │ OK                       │
-  ├──────────────────┼────────┼────────────────┼──────────────────────────┤
-  │ LEDC (hardware)  │ zerowy │ zero           │ odporny                  │
-  └──────────────────┴────────┴────────────────┴──────────────────────────┘
-
-
-
-  ❯ EMA: vol=139.6 int=185s rate=8069.52 ml/h (bootstrap=10)                                                                                                                    
-[606717] [INFO] TopOffRecord saved: ts=1773259453 vol=113 ml (slot=9, total=12063)                                                                                            
-[606727] [INFO] EMA block saved: vol=139.6 int=185s rate=8069.52 bootstrap=10                                                                                                 
-[607384] [INFO] METRICS: dev_vol=-19% dev_rate=-89% alert=2 bootstrap=10/5 wyjaśnij mi poszczególne pozycje w kontekście apilikacji i algorytmu                               
-                                                                                                                                                                              
-● Wyjaśnienie logów                            
-                                                                                                                                                                              
-  EMA: vol=139.6 int=185s rate=8069.52 ml/h (bootstrap=10)                                                                                                                    
-                                                                                                                                                                              
-  To aktualny stan Exponential Moving Average — historyczny "wzorzec normalnego cyklu" przechowywany w FRAM:                                                                  
-                                                                                                                                                                              
-  ┌───────────────────┬───────────┬───────────────────────────────────────────────────────────────────────┐                                                                   
-  │       Pole        │  Wartość  │                              Co oznacza                               │                                                                 
-  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
-  │ vol=139.6 ml      │ 139.6 ml  │ Typowa objętość jednej dolewki (średnia ważona z minionych cykli)     │                                                                 
-  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
-  │ int=185s          │ 185 s     │ Typowy odstęp między dolewkami (~3 min)                               │                                                                   
-  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
-  │ rate=8069.52 ml/h │ 8069 ml/h │ Tempo ubytku wody = vol/interval×3600 — tu jest problem (patrz niżej) │                                                                   
-  ├───────────────────┼───────────┼───────────────────────────────────────────────────────────────────────┤                                                                   
-  │ bootstrap=10      │ 10/5      │ Zebrano 10 cykli, próg bootstrap (5) przekroczony → alerty aktywne    │                                                                 
-  └───────────────────┴───────────┴───────────────────────────────────────────────────────────────────────┘                                                                   
-                                                                                                                                                                            
-  ---                                                                                                                                                                         
-  TopOffRecord saved: ts=1773259453 vol=113 ml (slot=9, total=12063)                                                                                                        
-                                                                                                                                                                              
-  Rekord właśnie zakończonego cyklu zapisany do ring buffera FRAM:
-                                                                                                                                                                              
-  ┌───────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                                        
-  │     Pole      │                                                    Co oznacza                                                    │                                        
-  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
-  │ ts=1773259453 │ Unix timestamp UTC z DS3231 (2026-03-11 ~09:44)                                                                  │                                      
-  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ vol=113 ml    │ Objętość dolana w tym cyklu = czas_pompy × flow_rate_ml/s                                                        │                                        
-  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
-  │ slot=9        │ Pozycja w ring bufferze (0–59 slotów × 20 bajtów każdy)                                                          │                                        
-  ├───────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤                                        
-  │ total=12063   │ Łączna liczba rekordów zapisanych od początku istnienia FRAM (monotoniczny licznik, nie zeruje się po restarcie) │                                      
-  └───────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                                        
-                                                                                                                                                                            
-  ---                                                                                                                                                                         
-  METRICS: dev_vol=-19% dev_rate=-89% alert=2 bootstrap=10/5                                                                                                                
-                                                                                                                                                                              
-  Porównanie tego cyklu z historyczną EMA:
-                                                                                                                                                                              
-  ┌────────────────┬────────────────────────────────────────┬─────────────────────────────────────────────────────────────┐                                                   
-  │      Pole      │               Obliczenie               │                        Interpretacja                        │                                                   
-  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
-  │ dev_vol=-19%   │ (113 - 139.6) / 139.6 = -19%           │ Ten cykl dolał o 19% mniej niż zwykle — mieści się w normie │                                                 
-  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
-  │ dev_rate=-89%  │ (rate_tego_cyklu - 8069) / 8069 = -89% │ Tempo zużycia wody w tym cyklu drastycznie niższe niż EMA   │                                                   
-  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
-  │ alert=2        │ próg rate_red_pct=80% przekroczony     │ 🔴 RED — tempo odbiega o >80% od normy                      │                                                   
-  ├────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤                                                   
-  │ bootstrap=10/5 │ 10 zebranych, próg=5                   │ Alerty aktywne (>5), EMA coraz dokładniejsze                │                                                 
-  └────────────────┴────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘                                                   
-                                                                                                                                                                            
-  ---                                                                                                                                                                         
-  Problem z rate=8069 ml/h                                                                                                                                                  
-                                                                                                                                                                              
-  To wartość nierealistyczna dla systemu akwarystycznego — 8 litrów/godz. to parowanie szybsze niż w basenie. Przyczyna: EMA rate jest silnie zaburzona przez wczesne cykle
-  gdy:                                                                                                                                                                        
-  - interwał między dolewkami był bardzo krótki (np. tuż po starcie systemu RTC nie miał jeszcze czasu UTC)                                                                 
-  - lub ts=0 (brak synchronizacji RTC) dawał intervalS=0 → rate=0, albo odwrotnie — timestamp skoczył nagle po synchronizacji NTP dając ogromny iloczyn                       
-                                                                                                                                                                            
-  Co zrobić: EMA "zapomni" tę anomalię po kolejnych normalnych cyklach (alpha=0.20, po ~15 cyklach wpływ wczesnych błędów spada do ~4%). Możesz też zresetować EMA przez zapis
-   domyślnej struktury do FRAM lub dodać endpoint API do resetu EMA.  
+| Problem | Rozwiązanie |
+|---------|-------------|
+| GPIO2 koliduje z WiFi (periman) | Przeniesiono ATO relay na GPIO21 (active LOW) |
+| PROV_FEEDBACK_PIN = 2 → aktywacja pompy przy boot | Zmieniono na GPIO8 (ERROR_SIGNAL_PIN) |
+| Wire.begin() musi być przed initFRAM() | Kolejność w main.cpp: Wire.begin() → initNVS() |
+| ESPAsyncWebServer POST: `hasParam(name, true)` wymaga `application/x-www-form-urlencoded` | Wszystkie POST wysyłają form-encoded, nie JSON |

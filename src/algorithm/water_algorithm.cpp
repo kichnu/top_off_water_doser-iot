@@ -598,6 +598,22 @@ bool WaterAlgorithm::resetSystem() {
     return true;
 }
 
+bool WaterAlgorithm::resetCycleHistory() {
+    if (isInCycle()) return false;  // Nie kasuj danych gdy cykl w toku
+
+    framBusy = true;
+    bool ok = clearTopOffRingBuffer();  // Czyści FRAM: count, wptr, EMA checksum
+    framBusy = false;
+
+    // Reset in-memory EMA — inaczej algorytm liczyłby alerty na starych danych
+    ema = EmaBlock{};
+    lastTopOffTimestamp = 0;
+    rolling24hVolumeMl  = 0;
+
+    LOG_INFO("WaterAlgorithm: cycle history and EMA reset");
+    return ok;
+}
+
 // ============================================================
 // STATUS GETTERS
 // ============================================================

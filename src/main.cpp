@@ -16,6 +16,9 @@
 #include "security/rate_limiter.h"
 #include "web/web_server.h"
 #include "algorithm/water_algorithm.h"
+#include "algorithm/kalkwasser_scheduler.h"
+#include "hardware/mixing_pump.h"
+#include "hardware/peristaltic_pump.h"
 #include "provisioning/prov_detector.h"
 #include "provisioning/ap_core.h"
 #include "provisioning/ap_server.h"
@@ -104,6 +107,9 @@ void setup() {
     initNVS();          // initNVS() wywołuje initFRAM() wewnętrznie (config.cpp)
     loadVolumeFromNVS();
     waterAlgorithm.initFromFRAM();
+    initMixingPump();
+    initPeristalticPump();
+    kalkwasserScheduler.init();
 
     bool credentials_loaded = initCredentialsManager();
     LOG_INFO("");
@@ -172,11 +178,10 @@ void loop() {
     if (now > 86400000UL) { // 24h w ms
         Serial.println("=== DAILY RESTART: 24h uptime reached ===");
         
-        if (isPumpActive()) {
-            stopPump();
-            Serial.println("Pump stopped before restart");
-            delay(1000);
-        }
+        if (isPumpActive())              stopPump();
+        if (isMixingPumpActive())        stopMixingPump();
+        if (isPeristalticPumpRunning())  stopPeristalticPump();
+        delay(1000);
         
         Serial.println("System restarting in 3 seconds...");
         delay(3000);
@@ -186,6 +191,7 @@ void loop() {
     // Sensor + algorytm — każdy cykl loop
     updateWaterSensor();
     waterAlgorithm.update();
+    kalkwasserScheduler.update();
 
     // Pozostałe systemy co 100 ms
     if (now - lastUpdate >= 100) {

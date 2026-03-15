@@ -48,8 +48,14 @@ void initWebServer() {
     server.on("/api/set-fill-water-max", HTTP_POST, handleSetFillWaterMax);  // daily_limit_ml
     server.on("/api/set-dose", HTTP_POST, handleSetDose);                    // dose_ml
 
-    // Cycle History endpoint
-    server.on("/api/cycle-history", HTTP_GET, handleGetCycleHistory);
+    // Cycle History endpoints
+    server.on("/api/cycle-history",       HTTP_GET,  handleGetCycleHistory);
+    server.on("/api/clear-cycle-history", HTTP_POST, handleClearCycleHistory);
+
+    // Kalkwasser endpoints
+    server.on("/api/kalkwasser-config",     HTTP_GET | HTTP_POST, handleKalkwasserConfig);
+    server.on("/api/kalkwasser-calibrate",  HTTP_POST,            handleKalkwasserCalibrate);
+    server.on("/api/kalkwasser-flow-rate",  HTTP_POST,            handleKalkwasserFlowRate);
 
     // System reset
     server.on("/api/system-reset", HTTP_POST, handleSystemReset);

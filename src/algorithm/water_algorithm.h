@@ -113,6 +113,7 @@ public:
     // ---- Reset / odzyskiwanie ----
     void resetFromError();
     bool resetSystem();
+    bool resetCycleHistory();  // Czyści ring buffer FRAM + in-memory EMA
 
     // ---- System disable ----
     bool wasSystemDisabled() const { return systemWasDisabled; }

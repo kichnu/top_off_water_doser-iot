@@ -1052,3 +1052,34 @@ bool loadTopOffConfigFromFRAM(TopOffConfig& cfg) {
     cfg = tmp;
     return true;
 }
+
+// ================================================================
+// KALKWASSER CONFIG
+// ================================================================
+
+static_assert(sizeof(KalkwasserConfig) == 20, "KalkwasserConfig size mismatch!");
+
+bool saveKalkwasserConfigToFRAM(const KalkwasserConfig& cfg) {
+    if (!framInitialized) return false;
+    fram.write(FRAM_ADDR_KALKWASSER_CFG, (uint8_t*)&cfg, sizeof(KalkwasserConfig));
+    uint16_t chksum = calculateChecksum((uint8_t*)&cfg, sizeof(KalkwasserConfig));
+    fram.write(FRAM_ADDR_KALKWASSER_CHKSUM, (uint8_t*)&chksum, 2);
+    LOG_INFO("KalkwasserConfig saved: enabled=%d dose=%d ml rate=%lu ul/s",
+             cfg.enabled, cfg.daily_dose_ml, cfg.flow_rate_ul_per_s);
+    return true;
+}
+
+bool loadKalkwasserConfigFromFRAM(KalkwasserConfig& cfg) {
+    if (!framInitialized) return false;
+    KalkwasserConfig tmp;
+    fram.read(FRAM_ADDR_KALKWASSER_CFG, (uint8_t*)&tmp, sizeof(KalkwasserConfig));
+    uint16_t stored = 0;
+    fram.read(FRAM_ADDR_KALKWASSER_CHKSUM, (uint8_t*)&stored, 2);
+    uint16_t calc = calculateChecksum((uint8_t*)&tmp, sizeof(KalkwasserConfig));
+    if (calc != stored || tmp.magic != KALKWASSER_CONFIG_MAGIC) {
+        LOG_WARNING("KalkwasserConfig checksum/magic mismatch — no kalkwasser config");
+        return false;
+    }
+    cfg = tmp;
+    return true;
+}

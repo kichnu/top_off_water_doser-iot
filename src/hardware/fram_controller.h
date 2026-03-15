@@ -98,6 +98,24 @@ struct PumpCycle {
 #define FRAM_ADDR_TOPOFF_WPTR       0x0602   // 2 bytes — write pointer (ring buffer)
 #define FRAM_ADDR_TOPOFF_DATA       0x0610   // Start danych: 60 × 20 = 1200 bajtów → kończy się 0x0AC0
 
+// Kalkwasser Scheduler config (20 bytes + 2 checksum)
+#define FRAM_ADDR_KALKWASSER_CFG    0x0AC0   // 20 bytes — KalkwasserConfig struct
+#define FRAM_ADDR_KALKWASSER_CHKSUM 0x0AD4   // 2 bytes  — checksum
+
+// Konfiguracja Kalkwasser (zapisywana w FRAM)
+struct KalkwasserConfig {
+    uint8_t  magic;              // 0xCA = valid
+    uint8_t  enabled;            // 1 = active
+    uint16_t daily_dose_ml;      // dobowa dawka kalkwasser [ml]
+    uint32_t flow_rate_ul_per_s; // kalibracja: µl/s (30s test)
+    uint32_t last_dose_ts;       // UTC timestamp ostatniej dawki
+    uint32_t last_mix_ts;        // UTC timestamp ostatniego mieszania
+    uint8_t  _reserved[4];       // padding do 20 bytes
+};
+static_assert(sizeof(KalkwasserConfig) == 20, "KalkwasserConfig must be 20 bytes");
+
+#define KALKWASSER_CONFIG_MAGIC 0xCA
+
 // Common constants
 // #define FRAM_MAGIC_NUMBER      0x57415452  // "WATR" in hex
 // #define FRAM_DATA_VERSION      0x0002      // Version 2 (updated for dual-mode)
@@ -179,6 +197,10 @@ bool loadEmaBlockFromFRAM(EmaBlock& ema);
 // Konfiguracja algorytmu
 bool saveTopOffConfigToFRAM(const TopOffConfig& cfg);
 bool loadTopOffConfigFromFRAM(TopOffConfig& cfg);
+
+// Kalkwasser config
+bool saveKalkwasserConfigToFRAM(const KalkwasserConfig& cfg);
+bool loadKalkwasserConfigFromFRAM(KalkwasserConfig& cfg);
 
 // ===============================
 // FRAM CREDENTIALS SECTION

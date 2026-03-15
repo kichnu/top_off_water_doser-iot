@@ -35,7 +35,7 @@
 #define DEFAULT_RATE_YELLOW_SIGMA   150     // Próg żółty — odchylenie w jednostkach sigma [%] (1.5×)
 #define DEFAULT_RATE_RED_SIGMA      250     // Próg czerwony — odchylenie w jednostkach sigma [%] (2.5×)
 #define DEFAULT_HISTORY_WINDOW_S  86400     // Okno historii [s] — domyślnie 24h
-#define DEFAULT_MIN_BOOTSTRAP         5     // Min. dolewek przed aktywacją alertów
+#define DEFAULT_MIN_BOOTSTRAP         3     // Min. dolewek przed aktywacją alertów
 
 // ============================================================
 // SPRAWDZENIA INTEGRALNOŚCI STAŁYCH

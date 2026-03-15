@@ -48,8 +48,14 @@ void handleGetFillWaterMax(AsyncWebServerRequest* request);
 void handleSetFillWaterMax(AsyncWebServerRequest* request);  // sets daily_limit_ml
 void handleSetDose(AsyncWebServerRequest* request);          // sets dose_ml
 
-// Cycle History endpoint
+// Cycle History endpoints
 void handleGetCycleHistory(AsyncWebServerRequest* request);
+void handleClearCycleHistory(AsyncWebServerRequest* request);
+
+// Kalkwasser endpoints
+void handleKalkwasserConfig(AsyncWebServerRequest* request);
+void handleKalkwasserCalibrate(AsyncWebServerRequest* request);
+void handleKalkwasserFlowRate(AsyncWebServerRequest* request);
 
 // System reset (works from any state except LOGGING)
 void handleSystemReset(AsyncWebServerRequest *request);
