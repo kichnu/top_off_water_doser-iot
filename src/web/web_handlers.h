@@ -56,6 +56,8 @@ void handleClearCycleHistory(AsyncWebServerRequest* request);
 void handleKalkwasserConfig(AsyncWebServerRequest* request);
 void handleKalkwasserCalibrate(AsyncWebServerRequest* request);
 void handleKalkwasserFlowRate(AsyncWebServerRequest* request);
+void handleMixingPumpDirect(AsyncWebServerRequest* request);
+void handlePeristalticPumpDirect(AsyncWebServerRequest* request);
 
 // System reset (works from any state except LOGGING)
 void handleSystemReset(AsyncWebServerRequest *request);

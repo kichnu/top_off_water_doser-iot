@@ -163,6 +163,11 @@ void KalkwasserScheduler::update() {
                 LOG_INFO("KalkwasserScheduler: calibration run complete (30s) → IDLE");
             }
             break;
+
+        case KALK_DIRECT_MIX:
+        case KALK_DIRECT_DOSE:
+            // Stay until explicit directMixOff()/directDoseOff() or system disable
+            break;
     }
 }
 
@@ -211,6 +216,42 @@ void KalkwasserScheduler::stopCalibration() {
         stopPeristalticPump();
         state = KALK_IDLE;
         LOG_INFO("KalkwasserScheduler: calibration stopped manually");
+    }
+}
+
+// ============================================================
+// Direct manual control (GUI buttons)
+// ============================================================
+
+bool KalkwasserScheduler::directMixOn() {
+    if (state != KALK_IDLE) return false;
+    startMixingPump();
+    state = KALK_DIRECT_MIX;
+    LOG_INFO("KalkwasserScheduler: mixing pump DIRECT ON");
+    return true;
+}
+
+void KalkwasserScheduler::directMixOff() {
+    if (state == KALK_DIRECT_MIX) {
+        stopMixingPump();
+        state = KALK_IDLE;
+        LOG_INFO("KalkwasserScheduler: mixing pump DIRECT OFF");
+    }
+}
+
+bool KalkwasserScheduler::directDoseOn() {
+    if (state != KALK_IDLE) return false;
+    startPeristalticPump(0);   // durationSeconds=0 → continuous, no auto-stop
+    state = KALK_DIRECT_DOSE;
+    LOG_INFO("KalkwasserScheduler: peristaltic pump DIRECT ON (continuous)");
+    return true;
+}
+
+void KalkwasserScheduler::directDoseOff() {
+    if (state == KALK_DIRECT_DOSE) {
+        stopPeristalticPump();
+        state = KALK_IDLE;
+        LOG_INFO("KalkwasserScheduler: peristaltic pump DIRECT OFF");
     }
 }
 
@@ -356,6 +397,8 @@ const char* KalkwasserScheduler::getStateString() const {
         case KALK_SETTLING:         return "SETTLING";
         case KALK_DOSING:           return "DOSING";
         case KALK_CALIBRATING:      return "CALIBRATING";
+        case KALK_DIRECT_MIX:       return "DIRECT_MIX";
+        case KALK_DIRECT_DOSE:      return "DIRECT_DOSE";
         default:                    return "UNKNOWN";
     }
 }

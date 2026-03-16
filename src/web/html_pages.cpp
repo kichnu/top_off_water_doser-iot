@@ -300,8 +300,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
             align-items: center;
             justify-content: space-between;
             padding: 12px 0 24px;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 24px;
         }
 
         .logo {
@@ -456,11 +454,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
         /* ===== SECOND CARD: Pump Control ===== */
         .pump-controls {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
         }
         @media (max-width: 480px) {
-            .pump-controls { grid-template-columns: 1fr; }
+            .pump-controls { grid-template-columns: repeat(2, 1fr); }
         }
         .btn-kalk-off {
             background: rgba(234,179,8,0.08); border: 1px solid rgba(234,179,8,0.3);
@@ -877,7 +875,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     &#9888; No top-off events in last 24h — kalkwasser dose may be too high!
                 </div>
                 <div class="kalk-section">
-                    <div class="kalk-section-label">Mixing schedule</div>
+                    <div class="kalk-section-label">Kalkwasser Mixing schedule</div>
                     <div class="kalk-mix-grid">
                         <div class="kalk-tile kalk-ev-pending" id="kalkMix0">00:15</div>
                         <div class="kalk-tile kalk-ev-pending" id="kalkMix1">06:15</div>
@@ -886,7 +884,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                 </div>
                 <div class="kalk-section">
-                    <div class="kalk-section-label">Dosing schedule</div>
+                    <div class="kalk-section-label">Kalkwasser Dosing schedule</div>
                     <div class="kalk-dose-grid">
                         <div class="kalk-tile kalk-ev-pending" id="kalkDose0">02:00</div>
                         <div class="kalk-tile kalk-ev-pending" id="kalkDose1">03:00</div>
@@ -922,6 +920,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <button id="systemToggleBtn" class="btn btn-primary" onclick="toggleSystem()">System On</button>
                 <button id="kalkwasserBtn" class="btn btn-kalk-off" onclick="toggleKalkwasser()">Kalkwasser OFF</button>
                 <button id="manualPumpBtn" class="btn btn-off">Manual Pump OFF</button>
+                <button id="mixingPumpBtn" class="btn btn-off" onclick="toggleMixingPump()">Mixing Pump OFF</button>
+                <button id="peristalticPumpBtn" class="btn btn-off" onclick="togglePeristalticPump()">Peristaltic OFF</button>
                 <button id="systemResetBtn" class="btn btn-secondary" onclick="systemReset()">System Reset</button>
             </div>
         </div>
@@ -1206,7 +1206,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 btn.className = "btn btn-primary";
             } else {
                 btn.textContent = "System Off";
-                btn.className = "btn btn-off";
+                btn.className = "btn btn-kalk-off";
             }
         }
 
@@ -1324,6 +1324,62 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 btn.textContent = "Manual Pump OFF";
                 btn.className = "btn btn-off";
             }
+        }
+
+        // ============================================
+        // MIXING PUMP DIRECT (bistable)
+        // ============================================
+        function toggleMixingPump() {
+            const btn = document.getElementById("mixingPumpBtn");
+            const isOn = btn.classList.contains("btn-primary");
+            btn.disabled = true;
+            secureFetch("api/mixing-pump", {
+                method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: "action=" + (isOn ? "off" : "on")
+            })
+            .then(function(r) { if (!r) return null; return r.json(); })
+            .then(function(data) {
+                if (data && data.success) updateMixingPumpButton(data.active);
+                else if (data) console.error("Mixing pump error:", data.error);
+                btn.disabled = false;
+            })
+            .catch(function(e) { console.error("Mixing pump error:", e); btn.disabled = false; });
+        }
+
+        function updateMixingPumpButton(isOn) {
+            var btn = document.getElementById("mixingPumpBtn");
+            if (!btn) return;
+            btn.textContent = isOn ? "Mixing Pump ON" : "Mixing Pump OFF";
+            btn.className   = "btn " + (isOn ? "btn-primary" : "btn-off");
+        }
+
+        // ============================================
+        // PERISTALTIC PUMP DIRECT (bistable)
+        // ============================================
+        function togglePeristalticPump() {
+            const btn = document.getElementById("peristalticPumpBtn");
+            const isOn = btn.classList.contains("btn-primary");
+            btn.disabled = true;
+            secureFetch("api/peristaltic-pump", {
+                method: "POST",
+                headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                body: "action=" + (isOn ? "off" : "on")
+            })
+            .then(function(r) { if (!r) return null; return r.json(); })
+            .then(function(data) {
+                if (data && data.success) updatePeristalticPumpButton(data.active);
+                else if (data) console.error("Peristaltic pump error:", data.error);
+                btn.disabled = false;
+            })
+            .catch(function(e) { console.error("Peristaltic pump error:", e); btn.disabled = false; });
+        }
+
+        function updatePeristalticPumpButton(isOn) {
+            var btn = document.getElementById("peristalticPumpBtn");
+            if (!btn) return;
+            btn.textContent = isOn ? "Peristaltic ON" : "Peristaltic OFF";
+            btn.className   = "btn " + (isOn ? "btn-primary" : "btn-off");
         }
 
         // ============================================
@@ -1467,6 +1523,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
                     // Sync manual pump button with actual pump state
                     updatePumpButton(data.pump_active);
+                    updateMixingPumpButton(data.mixing_pump_active || false);
+                    updatePeristalticPumpButton(data.peristaltic_pump_active || false);
 
                     // WiFi status
                     const wifiItem = document.getElementById("wifiItem");
@@ -1534,6 +1592,12 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     const pctDose = Math.min((dose / 2000) * 100, 100);
                     document.getElementById("doseBarFill").style.width = pctDose + "%";
                     document.getElementById("doseText").textContent = dose + " ml / cycle";
+
+                    // Populate inputs with current saved values (skip if user is editing)
+                    const limitInp = document.getElementById("dailyLimitInput");
+                    if (document.activeElement !== limitInp) limitInp.value = limit;
+                    const doseInp = document.getElementById("doseInput");
+                    if (document.activeElement !== doseInp) doseInp.value = dose;
                 })
                 .catch((e) => console.error("loadDailyVolume error:", e));
         }
@@ -1555,7 +1619,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((r) => { if (!r) return null; return r.json(); })
                 .then((data) => {
                     if (!data) return;
-                    if (data.success) { input.value = ""; loadDailyVolume(); }
+                    if (data.success) { loadDailyVolume(); }
                     else console.error("Set daily limit failed:", data.error);
                 })
                 .catch((e) => console.error("Set daily limit error:", e));
@@ -1573,6 +1637,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     const max   = data.available_max_ml;
                     const avBar  = document.getElementById("availableBarFill");
                     const avText = document.getElementById("availableText");
+                    const avInput = document.getElementById("availableLimitInput");
                     if (max === 0) {
                         avBar.style.width = "0%";
                         avBar.style.background = "";
@@ -1589,6 +1654,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                             avText.style.color = "";
                             avBar.style.background = "";
                         }
+                        // Pre-fill input with max (reservoir capacity) for quick Refill
+                        if (document.activeElement !== avInput) avInput.value = max;
                     }
                 })
                 .catch((e) => console.error("loadAvailableVolume error:", e));
@@ -1608,7 +1675,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((r) => { if (!r) return null; return r.json(); })
                 .then((data) => {
                     if (!data) return;
-                    if (data.success) { input.value = ""; loadAvailableVolume(); }
+                    if (data.success) { loadAvailableVolume(); }
                     else console.error("Set available volume failed:", data.error);
                 })
                 .catch((e) => console.error("Set available volume error:", e));
@@ -1631,7 +1698,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((r) => { if (!r) return null; return r.json(); })
                 .then((data) => {
                     if (!data) return;
-                    if (data.success) { input.value = ""; loadDailyVolume(); }
+                    if (data.success) { loadDailyVolume(); }
                     else console.error("Set dose failed:", data.error);
                 })
                 .catch((e) => console.error("Set dose error:", e));

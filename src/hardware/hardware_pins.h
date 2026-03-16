@@ -20,13 +20,13 @@
 // ============================================================
 
 // ============== TOP-OFF SYSTEM ==============
-#define ATO_PUMP_RELAY_PIN          21  // Pompa top-off (LOW = ON, active-LOW relay) [D6]
+#define ATO_PUMP_RELAY_PIN          4  // Pompa top-off (LOW = ON, active-LOW relay) [D2]
 #define WATER_SENSOR_PIN             9  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
 
 // ============== KALKWASSER SYSTEM (2 + 1 kanał) ==============
 #define PERYSTALTIC_PUMP_DRIVER_PIN   10  // Pompa dozująca A (HIGH = ON)
-#define MIXING_PUMP_RELAY_PIN        3  // Pompa dozująca A (HIGH = ON)
-#define RESERVE_PUMP_RELAY_PIN       4  // Pompa dozująca A (HIGH = ON)
+#define MIXING_PUMP_RELAY_PIN        3  // Pompa miksująca (LOW = ON, active-LOW relay) [D1]
+// #define RESERVE_PUMP_RELAY_PIN       4  // Rezerwa (LOW = ON, active-LOW relay) [D2]
 
 
 // ============== I2C (DS3231 RTC + FRAM MB85RC256V) ==============
@@ -41,6 +41,6 @@
 // GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)
 // GPIO 4  — zwolniony po usunięciu drugiego czujnika
 // GPIO 20 — UART0 RX (Serial = USB CDC na XIAO, GPIO20 fizycznie wolny)
-// GPIO 21 — zajęty: ATO_PUMP_RELAY_PIN [D6]
+// GPIO 4  — zajęty: ATO_PUMP_RELAY_PIN [D2]
 
 #endif // HARDWARE_PINS_H

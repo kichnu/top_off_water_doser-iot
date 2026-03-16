@@ -56,6 +56,8 @@ void initWebServer() {
     server.on("/api/kalkwasser-config",     HTTP_GET | HTTP_POST, handleKalkwasserConfig);
     server.on("/api/kalkwasser-calibrate",  HTTP_POST,            handleKalkwasserCalibrate);
     server.on("/api/kalkwasser-flow-rate",  HTTP_POST,            handleKalkwasserFlowRate);
+    server.on("/api/mixing-pump",           HTTP_POST,            handleMixingPumpDirect);
+    server.on("/api/peristaltic-pump",      HTTP_POST,            handlePeristalticPumpDirect);
 
     // System reset
     server.on("/api/system-reset", HTTP_POST, handleSystemReset);

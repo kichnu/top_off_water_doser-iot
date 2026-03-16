@@ -17,6 +17,7 @@
 #include "../algorithm/water_algorithm.h"
 #include "../algorithm/kalkwasser_scheduler.h"
 #include "../hardware/peristaltic_pump.h"
+#include "../hardware/mixing_pump.h"
 
 void handleDashboard(AsyncWebServerRequest* request) {
     if (!checkAuthentication(request)) {
@@ -168,11 +169,13 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     // KALKWASSER STATUS
     // ============================================
-    json["kalk_state"]        = kalkwasserScheduler.getStateString();
-    json["kalk_enabled"]      = kalkwasserScheduler.isEnabled();
-    json["kalk_last_mix_ts"]  = kalkwasserScheduler.getLastMixTs();
-    json["kalk_last_dose_ts"] = kalkwasserScheduler.getLastDoseTs();
-    json["kalk_alarm"]        = kalkwasserScheduler.isNoTopoffAlarm();
+    json["kalk_state"]              = kalkwasserScheduler.getStateString();
+    json["kalk_enabled"]            = kalkwasserScheduler.isEnabled();
+    json["kalk_last_mix_ts"]        = kalkwasserScheduler.getLastMixTs();
+    json["kalk_last_dose_ts"]       = kalkwasserScheduler.getLastDoseTs();
+    json["kalk_alarm"]              = kalkwasserScheduler.isNoTopoffAlarm();
+    json["mixing_pump_active"]      = isMixingPumpActive();
+    json["peristaltic_pump_active"] = isPeristalticPumpRunning();
     json["rtc_ts"]            = (uint32_t)getUnixTimestamp();
     
     // ============================================
@@ -818,6 +821,72 @@ void handleSystemReset(AsyncWebServerRequest* request) {
     String response;
     serializeJson(json, response);
     request->send(200, "application/json", response);
+}
+
+// ===============================
+// DIRECT MIXING PUMP CONTROL
+// ===============================
+
+void handleMixingPumpDirect(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    if (!request->hasParam("action", true)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing action\"}");
+        return;
+    }
+    String action = request->getParam("action", true)->value();
+    bool active;
+    if (action == "on") {
+        bool ok = kalkwasserScheduler.directMixOn();
+        if (!ok) {
+            request->send(409, "application/json", "{\"success\":false,\"error\":\"Scheduler not idle\"}");
+            return;
+        }
+        active = true;
+    } else {
+        kalkwasserScheduler.directMixOff();
+        active = false;
+    }
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["active"]  = active;
+    String resp; serializeJson(doc, resp);
+    request->send(200, "application/json", resp);
+}
+
+// ===============================
+// DIRECT PERISTALTIC PUMP CONTROL
+// ===============================
+
+void handlePeristalticPumpDirect(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+    if (!request->hasParam("action", true)) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing action\"}");
+        return;
+    }
+    String action = request->getParam("action", true)->value();
+    bool active;
+    if (action == "on") {
+        bool ok = kalkwasserScheduler.directDoseOn();
+        if (!ok) {
+            request->send(409, "application/json", "{\"success\":false,\"error\":\"Scheduler not idle\"}");
+            return;
+        }
+        active = true;
+    } else {
+        kalkwasserScheduler.directDoseOff();
+        active = false;
+    }
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["active"]  = active;
+    String resp; serializeJson(doc, resp);
+    request->send(200, "application/json", resp);
 }
 
 // ===============================

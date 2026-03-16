@@ -32,6 +32,8 @@ enum KalkwasserState {
     KALK_SETTLING,
     KALK_DOSING,
     KALK_CALIBRATING,
+    KALK_DIRECT_MIX,        // manual direct control — mixing pump on until explicit stop
+    KALK_DIRECT_DOSE,       // manual direct control — peristaltic pump on until explicit stop
 };
 
 class KalkwasserScheduler {
@@ -44,6 +46,12 @@ public:
     bool setFlowRate(float measured_ml_30s);  // from calibration result
     bool startCalibration();
     void stopCalibration();
+
+    // Direct manual control (GUI buttons)
+    bool directMixOn();
+    void directMixOff();
+    bool directDoseOn();
+    void directDoseOff();
 
     // Status getters
     KalkwasserState getState()           const { return state; }
