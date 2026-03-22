@@ -1908,6 +1908,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
         // KALKWASSER
         // ============================================
 
+        var KALK_MIX_BASES  = [0, 6, 12, 18];
+        var KALK_DOSE_HOURS = [2,3,4,5,8,9,10,11,14,15,16,17,20,21,22,23];
+
         function updateKalkSchedule(rtcTs, mixDoneBits, doseDoneBits, kalkState, kalkEnabled, kalkAlarm) {
             var wrap = document.getElementById('kalkScheduleWrap');
             if (!wrap) return;
@@ -1926,10 +1929,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
             // Mix slots: [0,6,12,18]:15
             // Bit i in mixDoneBits = slot i was executed today (set by firmware).
-            var MIX_BASES = [0, 6, 12, 18];
-            var isMixState = (kalkState === 'KALK_MIXING' || kalkState === 'KALK_SETTLING' ||
-                              kalkState === 'KALK_WAIT_TOPOFF_MIX');
-            MIX_BASES.forEach(function(base, i) {
+            var isMixState = (kalkState === 'MIXING' || kalkState === 'SETTLING' ||
+                              kalkState === 'WAIT_MIX');
+            KALK_MIX_BASES.forEach(function(base, i) {
                 var slotMin   = base * 60 + 15;
                 var isNowSlot = (nowTotalMin >= slotMin && nowTotalMin < slotMin + 360);
                 var slotDone  = !!(mixDoneBits & (1 << i));
@@ -1943,9 +1945,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
             // Dose slots: 02-05, 08-11, 14-17, 20-23
             // Bit i in doseDoneBits = slot i was executed today (set by firmware).
-            var DOSE_HOURS = [2,3,4,5,8,9,10,11,14,15,16,17,20,21,22,23];
-            var isDosing = (kalkState === 'KALK_DOSING' || kalkState === 'KALK_WAIT_TOPOFF_DOSE');
-            DOSE_HOURS.forEach(function(h, i) {
+            var isDosing = (kalkState === 'DOSING' || kalkState === 'WAIT_DOSE');
+            KALK_DOSE_HOURS.forEach(function(h, i) {
                 var slotDone = !!(doseDoneBits & (1 << i));
                 var cls;
                 if      (isDosing && nowH === h) cls = 'active';   // yellow — dosing now

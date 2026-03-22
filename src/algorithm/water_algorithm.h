@@ -47,8 +47,7 @@ private:
     bool      errorPulseState;
 
     // ---- Czujnik dostępności wody ----
-    uint8_t lowReservoirCount;        // Licznik kolejnych wykryć LOW (w RAM, reset przy restarcie)
-    bool    lowReservoirWarningActive; // true gdy 1 <= count < LOW_RESERVOIR_CRITICAL_COUNT
+    uint8_t lowReservoirCount;  // Licznik kolejnych wykryć LOW (w RAM, reset przy restarcie)
 
     // ---- Flagi stanu ----
     bool systemWasDisabled;
@@ -107,7 +106,7 @@ public:
 
     // ---- Czujnik dostępności wody ----
     uint8_t getLowReservoirCount()   const { return lowReservoirCount; }
-    bool    isLowReservoirWarning()  const { return lowReservoirWarningActive; }
+    bool    isLowReservoirWarning()  const { return lowReservoirCount > 0 && lowReservoirCount < LOW_RESERVOIR_CRITICAL_COUNT; }
 
     // ---- Konfiguracja ----
     const TopOffConfig& getConfig() const { return config; }

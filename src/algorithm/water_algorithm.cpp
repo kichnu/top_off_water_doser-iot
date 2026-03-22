@@ -42,8 +42,7 @@ WaterAlgorithm::WaterAlgorithm() {
     errorPulseState   = false;
     errorSignalStart  = 0;
 
-    lowReservoirCount        = 0;
-    lowReservoirWarningActive = false;
+    lowReservoirCount = 0;
 
     systemWasDisabled = false;
     cycleLogged       = false;
@@ -223,11 +222,9 @@ void WaterAlgorithm::checkAvailableWaterSensor() {
         if (lowReservoirCount < 255) lowReservoirCount++;
 
         if (lowReservoirCount >= LOW_RESERVOIR_CRITICAL_COUNT) {
-            lowReservoirWarningActive = false;
             LOG_WARNING("LOW RESERVOIR CRITICAL: count=%d → STATE_ERROR", lowReservoirCount);
             startErrorSignal(ERROR_LOW_RESERVOIR);
         } else {
-            lowReservoirWarningActive = true;
             LOG_WARNING("LOW RESERVOIR WARNING: count=%d/%d — system continues",
                         lowReservoirCount, LOW_RESERVOIR_CRITICAL_COUNT - 1);
         }
@@ -235,8 +232,7 @@ void WaterAlgorithm::checkAvailableWaterSensor() {
         if (lowReservoirCount > 0) {
             LOG_INFO("Available water sensor OK — alarm counter reset (%d → 0)", lowReservoirCount);
         }
-        lowReservoirCount        = 0;
-        lowReservoirWarningActive = false;
+        lowReservoirCount = 0;
     }
 }
 
