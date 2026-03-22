@@ -17,12 +17,6 @@
 // ============================================================
 #define LOGGING_TIME                 5  // s — czas fazy logowania po cyklu (bez błędu)
 
-// ============================================================
-// SYGNALIZACJA BŁĘDÓW (ERROR_SIGNAL_PIN)
-// ============================================================
-#define ERROR_PULSE_HIGH           100  // ms — czas impulsu HIGH
-#define ERROR_PULSE_LOW            100  // ms — przerwa między impulsami
-#define ERROR_PAUSE               2000  // ms — pauza przed powtórzeniem sekwencji
 
 // ============================================================
 // CZUJNIK DOSTĘPNOŚCI WODY (AVAILABLE_WATER_SENSOR_PIN)

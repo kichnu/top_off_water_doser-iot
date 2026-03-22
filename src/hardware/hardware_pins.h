@@ -5,17 +5,16 @@
 // Seeed Xiao ESP32-C3 — Pin Mapping
 // ============================================================
 //
-//                ┌─────────────────────┐
-//           5V ──┤ 5V             3.3V ├── 3.3V
-//          GND ──┤ GND             GND ├── GND
-//  [D0] GPIO2  ──┤ D0             D10  ├── GPIO10  [D10]
-//  [D1] GPIO3  ──┤ D1              D9  ├── GPIO9   [D9]
-//  [D2] GPIO4  ──┤ D2              D8  ├── GPIO8   [D8]
-//  [D3] GPIO5  ──┤ D3              D7  ├── GPIO20  [D7]
-//  [D4] GPIO6  ──┤ D4/SDA          D6  ├── GPIO21  [D6]
-//  [D5] GPIO7  ──┤ D5/SCL          5V  ├── (USB)
-//                └─────────────────────┘
-//                        [USB-C]
+//                                          ┌────────────────┐
+//                               GPIO  2  ──┤                ├── 5V
+//       MIXING_PUMP_RELAY_PIN   GPIO  3  ──┤                ├── GND
+//          ATO_PUMP_RELAY_PIN   GPIO  4  ──┤                ├── 3.3V
+//                   RESET_PIN   GPIO  5  ──┤                ├── GPIO 10  
+//                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  ERROR_SIGNAL_PIN 
+//                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8 
+//  AVAILABLE_WATER_SENSOR_PIN   GPIO 21  ──┤                ├── GPIO 20  WATER_SENSOR_PIN 
+//                                          └────────────────┘
+//                       
 //
 // ============================================================
 
@@ -35,13 +34,15 @@
 #define I2C_SCL_PIN 7
 
 // ============== SYSTEM ==============
-#define ERROR_SIGNAL_PIN 9  // Sygnalizacja błędów — buzzer/LED (HIGH = aktywny)
 #define RESET_PIN 5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
+
+// ============== DFPLAYER PRO (Fermion DFR0768) — UART1 ==============
+#define DFPLAYER_TX_PIN 9   // ESP32 TX → DFPlayer RX  (był ERROR_SIGNAL_PIN)
+#define DFPLAYER_RX_PIN 8   // DFPlayer TX → ESP32 RX  (był wolny)
 
 // ============== WOLNE (rezerwa) ==============
 // GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)
-// GPIO 4  — zwolniony po usunięciu drugiego czujnika
 // GPIO 20 — UART0 RX (Serial = USB CDC na XIAO, GPIO20 fizycznie wolny)
-// GPIO 4  — zajęty: ATO_PUMP_RELAY_PIN [D2]
+// GPIO 21 — UART0 TX (Serial = USB CDC na XIAO, GPIO21 fizycznie wolny)
 
 #endif // HARDWARE_PINS_H

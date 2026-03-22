@@ -19,6 +19,7 @@
 #include "algorithm/kalkwasser_scheduler.h"
 #include "hardware/mixing_pump.h"
 #include "hardware/peristaltic_pump.h"
+#include "hardware/audio_player.h"
 #include "provisioning/prov_detector.h"
 #include "provisioning/ap_core.h"
 #include "provisioning/ap_server.h"
@@ -109,6 +110,7 @@ void setup() {
     waterAlgorithm.initFromFRAM();
     initMixingPump();
     initPeristalticPump();
+    audioPlayer.init();
     kalkwasserScheduler.init();
 
     bool credentials_loaded = initCredentialsManager();
@@ -181,6 +183,7 @@ void loop() {
         if (isPumpActive())              stopPump();
         if (isMixingPumpActive())        stopMixingPump();
         if (isPeristalticPumpRunning())  stopPeristalticPump();
+        audioPlayer.stop();
         delay(1000);
         
         Serial.println("System restarting in 3 seconds...");
@@ -196,6 +199,7 @@ void loop() {
     // Pozostałe systemy co 100 ms
     if (now - lastUpdate >= 100) {
         updatePumpController();
+        audioPlayer.update();
         updateSessionManager();
         updateRateLimiter();
         updateWiFi();

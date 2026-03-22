@@ -41,10 +41,6 @@ private:
 
     // ---- Obsługa błędów ----
     ErrorCode lastError;
-    bool      errorSignalActive;
-    uint32_t  errorSignalStart;
-    uint8_t   errorPulseCount;
-    bool      errorPulseState;
 
     // ---- Czujnik dostępności wody ----
     uint8_t lowReservoirCount;  // Licznik kolejnych wykryć LOW (w RAM, reset przy restarcie)
@@ -69,9 +65,8 @@ private:
     int8_t  calculateDevSigma(float rateMlH) const;
     uint16_t scanRolling24h() const;
 
-    // Error signal
+    // Error handling
     void startErrorSignal(ErrorCode error);
-    void updateErrorSignal();
     void checkResetButton();
 
     // FRAM

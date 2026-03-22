@@ -36,19 +36,13 @@ WaterAlgorithm::WaterAlgorithm() {
     ema.ema_dev_ml_h   = 0.0f;
     ema.bootstrap_count = 0;
 
-    lastError         = ERROR_NONE;
-    errorSignalActive = false;
-    errorPulseCount   = 0;
-    errorPulseState   = false;
-    errorSignalStart  = 0;
+    lastError = ERROR_NONE;
 
     lowReservoirCount = 0;
 
     systemWasDisabled = false;
     cycleLogged       = false;
 
-    pinMode(ERROR_SIGNAL_PIN, OUTPUT);
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
     pinMode(RESET_PIN, INPUT_PULLUP);
     pinMode(AVAILABLE_WATER_SENSOR_PIN, INPUT_PULLUP);
 
@@ -142,7 +136,6 @@ void WaterAlgorithm::saveEmaToFRAM() {
 // ============================================================
 void WaterAlgorithm::update() {
     checkResetButton();
-    updateErrorSignal();
     checkPumpAutoEnable();
 
     if (isSystemDisabled()) {
@@ -508,43 +501,10 @@ void WaterAlgorithm::handleSystemDisable() {
 // ============================================================
 
 void WaterAlgorithm::startErrorSignal(ErrorCode error) {
-    lastError         = error;
-    errorSignalActive = true;
-    errorSignalStart  = millis();
-    errorPulseCount   = 0;
-    errorPulseState   = false;
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
-
+    lastError    = error;
     currentState = STATE_ERROR;
     stateStartMs = millis();
-
-    LOG_WARNING("Error signal started: code=%d → STATE_ERROR", (int)error);
-}
-
-void WaterAlgorithm::updateErrorSignal() {
-    if (!errorSignalActive) return;
-
-    uint32_t now     = millis();
-    uint32_t elapsed = now - errorSignalStart;
-    uint8_t  pulses  = (uint8_t)lastError;
-    if (pulses == 0) pulses = 1;
-
-    uint32_t cycleDuration = pulses * (ERROR_PULSE_HIGH + ERROR_PULSE_LOW) + ERROR_PAUSE;
-    uint32_t pos           = elapsed % cycleDuration;
-    uint32_t pulseEnd      = (uint32_t)pulses * (ERROR_PULSE_HIGH + ERROR_PULSE_LOW);
-
-    bool newState;
-    if (pos >= pulseEnd) {
-        newState = false;  // PAUSE
-    } else {
-        uint32_t inCycle = pos % (ERROR_PULSE_HIGH + ERROR_PULSE_LOW);
-        newState = (inCycle < ERROR_PULSE_HIGH);
-    }
-
-    if (newState != errorPulseState) {
-        errorPulseState = newState;
-        digitalWrite(ERROR_SIGNAL_PIN, newState ? HIGH : LOW);
-    }
+    LOG_WARNING("Error: code=%d → STATE_ERROR", (int)error);
 }
 
 // ============================================================
@@ -562,7 +522,7 @@ void WaterAlgorithm::checkResetButton() {
         wasPressed = true;
     } else if (!pressed && wasPressed) {
         wasPressed = false;
-        if (currentState == STATE_ERROR || errorSignalActive) {
+        if (currentState == STATE_ERROR) {
             resetFromError();
         }
     }
@@ -602,10 +562,7 @@ void WaterAlgorithm::addManualVolume(uint16_t volumeMl) {
 // ============================================================
 
 void WaterAlgorithm::resetFromError() {
-    errorSignalActive = false;
-    lastError         = ERROR_NONE;
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
-
+    lastError    = ERROR_NONE;
     currentState = STATE_IDLE;
     stateStartMs = millis();
     resetSensorProcess();
@@ -617,10 +574,7 @@ bool WaterAlgorithm::resetSystem() {
 
     if (isPumpActive()) stopPump();
 
-    errorSignalActive = false;
-    lastError         = ERROR_NONE;
-    digitalWrite(ERROR_SIGNAL_PIN, LOW);
-
+    lastError    = ERROR_NONE;
     currentState = STATE_IDLE;
     stateStartMs = millis();
     resetSensorProcess();
