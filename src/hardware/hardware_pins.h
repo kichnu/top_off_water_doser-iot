@@ -20,22 +20,23 @@
 // ============================================================
 
 // ============== TOP-OFF SYSTEM ==============
-#define ATO_PUMP_RELAY_PIN          4  // Pompa top-off (LOW = ON, active-LOW relay) [D2]
-#define WATER_SENSOR_PIN             9  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
+#define ATO_PUMP_RELAY_PIN 4  // Pompa top-off (LOW = ON, active-LOW relay) [D2]
+#define WATER_SENSOR_PIN 20  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
+#define AVAILABLE_WATER_SENSOR_PIN 21   // Czujnik pływakowy  (INPUT_PULLUP, active LOW)
 
 // ============== KALKWASSER SYSTEM (2 + 1 kanał) ==============
-#define PERYSTALTIC_PUMP_DRIVER_PIN   10  // Pompa dozująca A (HIGH = ON)
-#define MIXING_PUMP_RELAY_PIN        3  // Pompa miksująca (LOW = ON, active-LOW relay) [D1]
+#define PERYSTALTIC_PUMP_DRIVER_PIN 10  // Pompa dozująca A (HIGH = ON)
+#define MIXING_PUMP_RELAY_PIN 3  // Pompa miksująca (LOW = ON, active-LOW relay) [D1]
 // #define RESERVE_PUMP_RELAY_PIN       4  // Rezerwa (LOW = ON, active-LOW relay) [D2]
 
 
 // ============== I2C (DS3231 RTC + FRAM MB85RC256V) ==============
-#define I2C_SDA_PIN          6
-#define I2C_SCL_PIN          7
+#define I2C_SDA_PIN 6
+#define I2C_SCL_PIN 7
 
 // ============== SYSTEM ==============
-#define ERROR_SIGNAL_PIN     8  // Sygnalizacja błędów — buzzer/LED (HIGH = aktywny)
-#define RESET_PIN            5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
+#define ERROR_SIGNAL_PIN 9  // Sygnalizacja błędów — buzzer/LED (HIGH = aktywny)
+#define RESET_PIN 5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
 
 // ============== WOLNE (rezerwa) ==============
 // GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)

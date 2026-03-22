@@ -25,13 +25,21 @@
 #define ERROR_PAUSE               2000  // ms — pauza przed powtórzeniem sekwencji
 
 // ============================================================
+// CZUJNIK DOSTĘPNOŚCI WODY (AVAILABLE_WATER_SENSOR_PIN)
+// Alarm nieblokujący po każdym wykryciu LOW (dolewki 1–3).
+// Po LOW_RESERVOIR_CRITICAL_COUNT kolejnych wykryciach → alarm krytyczny (STATE_ERROR).
+// Brak wykrycia (HIGH) podczas dolewki → zeruje licznik.
+// ============================================================
+#define LOW_RESERVOIR_CRITICAL_COUNT  4  // Liczba kolejnych wykryć LOW → alarm krytyczny
+
+// ============================================================
 // DOMYŚLNE WARTOŚCI KONFIGURACJI ALGORYTMU
 // Używane gdy FRAM nie zawiera zapisanej konfiguracji.
 // Nadpisywane przez użytkownika przez Provisioning lub GUI.
 // ============================================================
 #define DEFAULT_DOSE_ML             150     // Stała dawka wody na jeden cykl [ml]
 #define DEFAULT_DAILY_LIMIT_ML     2000     // Limit dobowy niezależny od algorytmu [ml]
-#define DEFAULT_EMA_ALPHA          0.20f    // Współczynnik wygładzania EMA [0.10–0.40]
+#define DEFAULT_EMA_ALPHA          0.30f    // Współczynnik wygładzania EMA [0.10–0.40]
 #define DEFAULT_RATE_YELLOW_SIGMA   150     // Próg żółty — odchylenie w jednostkach sigma [%] (1.5×)
 #define DEFAULT_RATE_RED_SIGMA      250     // Próg czerwony — odchylenie w jednostkach sigma [%] (2.5×)
 #define DEFAULT_HISTORY_WINDOW_S  86400     // Okno historii [s] — domyślnie 24h
@@ -64,10 +72,11 @@ enum AlgorithmState {
 // Każdy niezerowy kod → STATE_ERROR, wymaga resetu
 // ============================================================
 enum ErrorCode {
-    ERROR_NONE        = 0,
-    ERROR_DAILY_LIMIT = 1,  // Przekroczono dobowy limit wody
-    ERROR_RED_ALERT   = 2,  // Czerwony alert — anomalia tempa zużycia wody
-    ERROR_BOTH        = 3   // Oba błędy jednocześnie
+    ERROR_NONE          = 0,
+    ERROR_DAILY_LIMIT   = 1,  // Przekroczono dobowy limit wody
+    ERROR_RED_ALERT     = 2,  // Czerwony alert — anomalia tempa zużycia wody
+    ERROR_BOTH          = 3,  // Oba błędy jednocześnie
+    ERROR_LOW_RESERVOIR = 4   // Krytyczny niski poziom wody w zbiorniku (4. kolejne wykrycie)
 };
 
 // ============================================================

@@ -169,6 +169,10 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     // KALKWASSER STATUS
     // ============================================
+    json["low_reservoir_count"]   = waterAlgorithm.getLowReservoirCount();
+    json["low_reservoir_warning"] = waterAlgorithm.isLowReservoirWarning();
+    json["low_reservoir_error"]   = (waterAlgorithm.getLastError() == ERROR_LOW_RESERVOIR);
+
     json["kalk_state"]              = kalkwasserScheduler.getStateString();
     json["kalk_enabled"]            = kalkwasserScheduler.isEnabled();
     json["kalk_last_mix_ts"]        = kalkwasserScheduler.getLastMixTs();

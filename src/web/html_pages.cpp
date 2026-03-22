@@ -420,6 +420,12 @@ const char* DASHBOARD_HTML = R"rawliteral(
         .status-main.status-error {
             border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.06);
         }
+        .status-main.status-warn {
+            border-color: rgba(234,179,8,0.4); background: rgba(234,179,8,0.06);
+        }
+        .status-main.status-disabled {
+            border-color: rgba(148,163,184,0.35); background: rgba(148,163,184,0.05);
+        }
         .status-main-body { flex: 1; min-width: 0; }
         .status-main-desc { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); }
         .status-main-sub {
@@ -855,6 +861,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                         <span id="sensor1Badge" class="sub-off">Sensors: OFF</span>
                         <span class="sub-sep">•</span>
                         <span id="pumpBadge" class="sub-off">Pump: IDLE</span>
+                        <span class="sub-sep" id="reservoirSep" style="display:none">•</span>
+                        <span id="reservoirAlarmBadge" style="display:none"></span>
                     </div>
                 </div>
                 <div class="status-main-wifi wifi-off" id="wifiItem">
@@ -958,22 +966,23 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                 </div>
 
-                <!-- Column 2: Available Water (remaining today = daily_limit - rolling_24h) -->
+                <!-- Column 2: Kalkwasser Dosing Settings -->
                 <div class="stat-column">
-                    <h3>Available Water</h3>
+                    <h3>Kalkwasser Dosing</h3>
                     <div class="stat-content">
                         <div class="volume-indicator">
                             <div class="volume-bar">
-                                <div class="volume-bar-fill" id="availableBarFill"></div>
+                                <div class="volume-bar-fill" id="kalkDoseBarFill"></div>
                             </div>
-                            <div class="volume-text" id="availableText">— ml remaining</div>
+                            <div class="volume-text" id="kalkDoseBarText">— ml / day</div>
                         </div>
                     </div>
                     <div class="input-group" style="margin-top: 8px;">
-                        <input type="number" id="availableLimitInput" min="100" max="20000" step="100" placeholder="reservoir ml">
+                        <input type="number" id="kalkDailyDose" min="1" max="500" step="1" placeholder="ml/day">
                     </div>
-                    <div class="stat-available">
-                        <button class="btn btn-secondary btn-small" onclick="setAvailableVolume()">Set / Refill</button>
+                    <div class="stat-daily">
+                        <button class="btn btn-secondary btn-small" onclick="saveKalkConfig()">Save</button>
+                        <span class="current-value" id="kalkDoseStatus">—</span>
                     </div>
                 </div>
 
@@ -1070,17 +1079,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 </div>
             </div>
 
-            <div class="card-subheader">Kalkwasser Dosing Settings</div>
-            <div class="settings-row" style="grid-template-columns:1fr 1fr;">
-                <div class="setting-item input-group">
-                    <label for="kalkDailyDose" style="text-align:center;">Daily dose (ml)</label>
-                    <input type="number" id="kalkDailyDose" min="1" max="500" step="1" value="0">
-                </div>
-                <div class="setting-item">
-                    <button class="btn btn-primary" onclick="saveKalkConfig()">Save</button>
-                    <span class="current-value" id="kalkDoseStatus">—</span>
-                </div>
-            </div>
         </div>
 
         <!-- Footer -->
@@ -1469,13 +1467,14 @@ const char* DASHBOARD_HTML = R"rawliteral(
             }
         }
 
-        function updateSystemBadge(badgeId, hasError, isDisabled) {
+        function updateSystemBadge(badgeId, hasError, isDisabled, hasWarning) {
             const main = document.getElementById('statusMain');
             if (!main) return;
             main.className = 'status-main';
-            if (hasError)        main.classList.add('status-error');
-            else if (isDisabled) main.classList.add('status-disabled');
-            else main.classList.add('status-ok');
+            if (hasError)         main.classList.add('status-error');
+            else if (isDisabled)  main.classList.add('status-disabled');
+            else if (hasWarning)  main.classList.add('status-warn');
+            else                  main.classList.add('status-ok');
         }
 
         function formatTime(seconds) {
@@ -1506,11 +1505,32 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((data) => {
                     if (!data) return;
                     
+                    // Low reservoir alarm badges
+                    const hasLowResError   = !!data.low_reservoir_error;
+                    const hasLowResWarning = !!data.low_reservoir_warning && !hasLowResError;
+                    const resCount         = data.low_reservoir_count || 0;
+                    const reservoirSep   = document.getElementById("reservoirSep");
+                    const reservoirBadge = document.getElementById("reservoirAlarmBadge");
+                    if (hasLowResError) {
+                        reservoirSep.style.display   = '';
+                        reservoirBadge.style.display = '';
+                        reservoirBadge.className     = 'sub-danger';
+                        reservoirBadge.textContent   = '\u26a0 Reservoir empty \u2014 refill & reset';
+                    } else if (hasLowResWarning) {
+                        reservoirSep.style.display   = '';
+                        reservoirBadge.style.display = '';
+                        reservoirBadge.className     = 'sub-warn';
+                        reservoirBadge.textContent   = '\u26a0 Low water reservoir (' + resCount + '/3)';
+                    } else {
+                        reservoirSep.style.display   = 'none';
+                        reservoirBadge.style.display = 'none';
+                    }
+
                     // Badges
                     updateSensorBadge("sensor1Badge", data.sensor_active);
                     updateSensorBadge("sensor2Badge", data.sensor_active);
                     updatePumpBadge("pumpBadge", data.pump_active, data.pump_attempt || 0);
-                    updateSystemBadge("systemBadge", data.system_error, data.system_disabled);
+                    updateSystemBadge("systemBadge", data.system_error, data.system_disabled, hasLowResWarning);
 
                     // Process status
                     document.getElementById("processDescription").textContent = data.state_description || "IDLE - Waiting for sensors";
@@ -1625,61 +1645,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .catch((e) => console.error("Set daily limit error:", e));
         }
 
-        // ============================================
-        // AVAILABLE VOLUME (physical reservoir)
-        // ============================================
-        function loadAvailableVolume() {
-            secureFetch("api/available-volume")
-                .then((r) => { if (!r) return null; return r.json(); })
-                .then((data) => {
-                    if (!data || !data.success) return;
-                    const avail = data.available_ml;
-                    const max   = data.available_max_ml;
-                    const avBar  = document.getElementById("availableBarFill");
-                    const avText = document.getElementById("availableText");
-                    const avInput = document.getElementById("availableLimitInput");
-                    if (max === 0) {
-                        avBar.style.width = "0%";
-                        avBar.style.background = "";
-                        avText.textContent = "not set";
-                        avText.style.color = "";
-                    } else {
-                        const pct = Math.min((avail / max) * 100, 100);
-                        avBar.style.width = pct + "%";
-                        avText.textContent = avail + " / " + max + " ml";
-                        if (avail === 0) {
-                            avText.style.color = "var(--accent-red)";
-                            avBar.style.background = "var(--accent-red)";
-                        } else {
-                            avText.style.color = "";
-                            avBar.style.background = "";
-                        }
-                        // Pre-fill input with max (reservoir capacity) for quick Refill
-                        if (document.activeElement !== avInput) avInput.value = max;
-                    }
-                })
-                .catch((e) => console.error("loadAvailableVolume error:", e));
-        }
-
-        function setAvailableVolume() {
-            const input = document.getElementById("availableLimitInput");
-            const value = parseInt(input.value);
-            if (isNaN(value) || value < 100 || value > 20000) return;
-            if (!confirm("Set reservoir volume to " + value + " ml?")) return;
-
-            secureFetch("api/set-available-volume", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: "value=" + value
-            })
-                .then((r) => { if (!r) return null; return r.json(); })
-                .then((data) => {
-                    if (!data) return;
-                    if (data.success) { loadAvailableVolume(); }
-                    else console.error("Set available volume failed:", data.error);
-                })
-                .catch((e) => console.error("Set available volume error:", e));
-        }
 
         // ============================================
         // SET SINGLE DOSE
@@ -2094,6 +2059,10 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 var st = document.getElementById('kalkDoseStatus');
                 if (data && data.success) {
                     st.textContent = (kalkIsEnabled ? 'Enabled' : 'Disabled') + ', ' + dose + ' ml/day';
+                    var bar = document.getElementById('kalkDoseBarFill');
+                    var txt = document.getElementById('kalkDoseBarText');
+                    if (bar) bar.style.width = Math.min((dose / 500) * 100, 100) + '%';
+                    if (txt) txt.textContent = dose > 0 ? dose + ' ml / day' : 'not configured';
                 } else {
                     st.textContent = 'Save failed';
                 }
@@ -2106,15 +2075,22 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then(function(data) {
                     if (!data || !data.success) return;
                     updateKalkButton(!!data.enabled);
-                    document.getElementById('kalkDailyDose').value = data.daily_dose_ml || 0;
+                    var dose = data.daily_dose_ml || 0;
+                    var inp = document.getElementById('kalkDailyDose');
+                    if (inp && document.activeElement !== inp) inp.value = dose;
                     var fr = data.flow_rate_ul_per_s || 0;
                     document.getElementById('kalkFlowStatus').textContent =
                         fr > 0 ? 'Current: ' + (fr / 1000).toFixed(3) + ' ml/s' : 'Current: not calibrated';
                     if (fr > 0) {
                         document.getElementById('kalkMeasuredMl').placeholder = (fr / 1000 * 30).toFixed(1);
                     }
-                    document.getElementById('kalkDoseStatus').textContent =
-                        (data.enabled ? 'Enabled' : 'Disabled') + ', ' + (data.daily_dose_ml || 0) + ' ml/day';
+                    var statusText = (data.enabled ? 'Enabled' : 'Disabled') + ', ' + dose + ' ml/day';
+                    document.getElementById('kalkDoseStatus').textContent = statusText;
+                    // Aktualizuj pasek w 3. karcie
+                    var bar = document.getElementById('kalkDoseBarFill');
+                    var txt = document.getElementById('kalkDoseBarText');
+                    if (bar) bar.style.width = Math.min((dose / 500) * 100, 100) + '%';
+                    if (txt) txt.textContent = dose > 0 ? dose + ' ml / day' : 'not configured';
                 });
         }
 
@@ -2126,14 +2102,13 @@ const char* DASHBOARD_HTML = R"rawliteral(
         pollingIntervals.push(setInterval(updateStatus, 2000));
         pollingIntervals.push(setInterval(loadSystemState, 30000));
         pollingIntervals.push(setInterval(loadDailyVolume, 10000));
-        pollingIntervals.push(setInterval(loadAvailableVolume, 30000));
+        pollingIntervals.push(setInterval(loadKalkConfig, 30000));
 
         // Initial loads
         updateStatus();
         loadSystemState();
         loadVolumePerSecond();
         loadDailyVolume();
-        loadAvailableVolume();
         loadKalkConfig();
     </script>
 </body>

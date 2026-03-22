@@ -46,6 +46,10 @@ private:
     uint8_t   errorPulseCount;
     bool      errorPulseState;
 
+    // ---- Czujnik dostępności wody ----
+    uint8_t lowReservoirCount;        // Licznik kolejnych wykryć LOW (w RAM, reset przy restarcie)
+    bool    lowReservoirWarningActive; // true gdy 1 <= count < LOW_RESERVOIR_CRITICAL_COUNT
+
     // ---- Flagi stanu ----
     bool systemWasDisabled;
     bool cycleLogged;
@@ -56,6 +60,9 @@ private:
     // Pump control
     void startAutoPump();
     void finishPumpCycle();
+
+    // Czujnik dostępności wody
+    void checkAvailableWaterSensor();
 
     // EMA i metryki
     void    updateEMA(uint32_t intervalS, float rateMlH);
@@ -97,6 +104,10 @@ public:
     uint16_t       getRolling24hVolume() const { return rolling24hVolumeMl; }
     uint32_t       getPumpElapsedMs()    const;
     uint16_t       getTotalCycleCount()  const { return totalCycleCount; }
+
+    // ---- Czujnik dostępności wody ----
+    uint8_t getLowReservoirCount()   const { return lowReservoirCount; }
+    bool    isLowReservoirWarning()  const { return lowReservoirWarningActive; }
 
     // ---- Konfiguracja ----
     const TopOffConfig& getConfig() const { return config; }

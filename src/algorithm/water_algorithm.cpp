@@ -42,12 +42,16 @@ WaterAlgorithm::WaterAlgorithm() {
     errorPulseState   = false;
     errorSignalStart  = 0;
 
+    lowReservoirCount        = 0;
+    lowReservoirWarningActive = false;
+
     systemWasDisabled = false;
     cycleLogged       = false;
 
     pinMode(ERROR_SIGNAL_PIN, OUTPUT);
     digitalWrite(ERROR_SIGNAL_PIN, LOW);
     pinMode(RESET_PIN, INPUT_PULLUP);
+    pinMode(AVAILABLE_WATER_SENSOR_PIN, INPUT_PULLUP);
 
     LOG_INFO("WaterAlgorithm: constructor done");
 }
@@ -203,7 +207,37 @@ void WaterAlgorithm::onDebounceStart() {
 void WaterAlgorithm::onDebounceComplete() {
     if (currentState != STATE_DEBOUNCING) return;
     resetSensorProcess();
+    checkAvailableWaterSensor();
+    if (currentState == STATE_ERROR) return;  // alarm krytyczny — nie startuj pompy
     startAutoPump();
+}
+
+// ============================================================
+// CZUJNIK DOSTĘPNOŚCI WODY — sprawdzenie po debouncing
+// ============================================================
+
+void WaterAlgorithm::checkAvailableWaterSensor() {
+    bool sensorLow = (digitalRead(AVAILABLE_WATER_SENSOR_PIN) == LOW);
+
+    if (sensorLow) {
+        if (lowReservoirCount < 255) lowReservoirCount++;
+
+        if (lowReservoirCount >= LOW_RESERVOIR_CRITICAL_COUNT) {
+            lowReservoirWarningActive = false;
+            LOG_WARNING("LOW RESERVOIR CRITICAL: count=%d → STATE_ERROR", lowReservoirCount);
+            startErrorSignal(ERROR_LOW_RESERVOIR);
+        } else {
+            lowReservoirWarningActive = true;
+            LOG_WARNING("LOW RESERVOIR WARNING: count=%d/%d — system continues",
+                        lowReservoirCount, LOW_RESERVOIR_CRITICAL_COUNT - 1);
+        }
+    } else {
+        if (lowReservoirCount > 0) {
+            LOG_INFO("Available water sensor OK — alarm counter reset (%d → 0)", lowReservoirCount);
+        }
+        lowReservoirCount        = 0;
+        lowReservoirWarningActive = false;
+    }
 }
 
 void WaterAlgorithm::onDebounceReset() {
@@ -645,6 +679,9 @@ String WaterAlgorithm::getStateDescription() const {
         case STATE_LOGGING:
             return "Logging cycle data";
         case STATE_ERROR:
+            if (lastError == ERROR_LOW_RESERVOIR) return "Reservoir empty — refill and reset";
+            if (lastError == ERROR_DAILY_LIMIT)   return "Daily limit reached — reset required";
+            if (lastError == ERROR_RED_ALERT)     return "Rate anomaly — reset required";
             return String("Error: code ") + (int)lastError + " — reset required";
         case STATE_MANUAL_OVERRIDE:
             return "Manual pump active";
