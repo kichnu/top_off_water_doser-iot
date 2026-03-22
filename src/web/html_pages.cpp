@@ -982,7 +982,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                     <div class="stat-daily">
                         <button class="btn btn-secondary btn-small" onclick="saveKalkConfig()">Save</button>
-                        <span class="current-value" id="kalkDoseStatus">—</span>
                     </div>
                 </div>
 
@@ -1060,7 +1059,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 </div>
                 <div class="setting-item">
                     <button class="btn btn-primary" onclick="updateVolumePerSecond()">Update Setting</button>
-                    <span class="current-value" id="volumeStatus">Current: — ml/s</span>
                 </div>
             </div>
 
@@ -1075,7 +1073,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 </div>
                 <div class="setting-item">
                     <button class="btn btn-primary" onclick="saveKalkFlowRate()">Save Result</button>
-                    <span class="current-value" id="kalkFlowStatus">Current: — ml/s</span>
                 </div>
             </div>
 
@@ -1409,7 +1406,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((data) => {
                     if (data.success) {
                         document.getElementById("volumePerSecond").value = parseFloat(data.volume_per_second).toFixed(1);
-                        document.getElementById("volumeStatus").textContent = "Current: " + parseFloat(data.volume_per_second).toFixed(1) + " ml/s";
                     }
                 })
                 .catch((error) => {
@@ -1419,15 +1415,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
         function updateVolumePerSecond() {
             const volumeInput = document.getElementById("volumePerSecond");
-            const statusSpan = document.getElementById("volumeStatus");
             const volumeValue = parseFloat(volumeInput.value);
 
-            if (volumeValue < 0.1 || volumeValue > 50.0) {
-                statusSpan.textContent = "Error: 0.1-50.0 range";
-                return;
-            }
-
-            statusSpan.textContent = "Updating...";
+            if (volumeValue < 0.1 || volumeValue > 50.0) return;
 
             const formData = new FormData();
             formData.append("volume_per_second", volumeValue);
@@ -1436,9 +1426,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .then((response) => response.json())
                 .then((data) => {
                     if (data.success) {
-                        statusSpan.textContent = "Current: " + volumeValue.toFixed(1) + " ml/s";
-                    } else {
-                        statusSpan.textContent = "Error: " + (data.error || "Update failed");
+                        volumeInput.value = volumeValue.toFixed(1);
                     }
                 })
                 .catch((error) => {
@@ -1997,12 +1985,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
             })
             .then(function(r) { return r ? r.json() : null; })
             .then(function(data) {
-                var st = document.getElementById('kalkFlowStatus');
                 if (data && data.success) {
                     var fr = data.flow_rate_ul_s || 0;
-                    st.textContent = fr > 0 ? 'Current: ' + (fr / 1000).toFixed(3) + ' ml/s' : 'Current: —';
-                } else {
-                    st.textContent = 'Save failed';
+                    if (fr > 0) {
+                        document.getElementById('kalkMeasuredMl').placeholder = (fr / 1000 * 30).toFixed(1);
+                    }
                 }
             });
         }
@@ -2043,15 +2030,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
             })
             .then(function(r) { return r ? r.json() : null; })
             .then(function(data) {
-                var st = document.getElementById('kalkDoseStatus');
                 if (data && data.success) {
-                    st.textContent = (kalkIsEnabled ? 'Enabled' : 'Disabled') + ', ' + dose + ' ml/day';
                     var bar = document.getElementById('kalkDoseBarFill');
                     var txt = document.getElementById('kalkDoseBarText');
                     if (bar) bar.style.width = Math.min((dose / 500) * 100, 100) + '%';
                     if (txt) txt.textContent = dose > 0 ? dose + ' ml / day' : 'not configured';
-                } else {
-                    st.textContent = 'Save failed';
                 }
             });
         }
@@ -2066,13 +2049,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     var inp = document.getElementById('kalkDailyDose');
                     if (inp && document.activeElement !== inp) inp.value = dose;
                     var fr = data.flow_rate_ul_per_s || 0;
-                    document.getElementById('kalkFlowStatus').textContent =
-                        fr > 0 ? 'Current: ' + (fr / 1000).toFixed(3) + ' ml/s' : 'Current: not calibrated';
                     if (fr > 0) {
                         document.getElementById('kalkMeasuredMl').placeholder = (fr / 1000 * 30).toFixed(1);
                     }
-                    var statusText = (data.enabled ? 'Enabled' : 'Disabled') + ', ' + dose + ' ml/day';
-                    document.getElementById('kalkDoseStatus').textContent = statusText;
                     // Aktualizuj pasek w 3. karcie
                     var bar = document.getElementById('kalkDoseBarFill');
                     var txt = document.getElementById('kalkDoseBarText');
