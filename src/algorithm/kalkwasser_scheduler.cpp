@@ -30,14 +30,20 @@ void KalkwasserScheduler::init() {
         flow_rate_ul_per_s = cfg.flow_rate_ul_per_s;
         last_dose_ts       = cfg.last_dose_ts;
         last_mix_ts        = cfg.last_mix_ts;
-        LOG_INFO("KalkwasserScheduler: loaded — enabled=%d dose=%dml rate=%lu ul/s",
-                 enabled, daily_dose_ml, flow_rate_ul_per_s);
+        dose_done_bits     = cfg.dose_done_bits;
+        mix_done_bits      = cfg.mix_done_bits;
+        done_day           = cfg.done_day;
+        LOG_INFO("KalkwasserScheduler: loaded — enabled=%d dose=%dml rate=%lu ul/s done_day=%d",
+                 enabled, daily_dose_ml, flow_rate_ul_per_s, done_day);
     } else {
         enabled            = false;
         daily_dose_ml      = 0;
         flow_rate_ul_per_s = 0;
         last_dose_ts       = 0;
         last_mix_ts        = 0;
+        dose_done_bits     = 0;
+        mix_done_bits      = 0;
+        done_day           = 0;
         LOG_INFO("KalkwasserScheduler: no FRAM config — defaults (disabled)");
     }
 
@@ -67,6 +73,8 @@ void KalkwasserScheduler::update() {
     uint32_t nowTs = (uint32_t)getUnixTimestamp();
     uint32_t nowMs = millis();
 
+    checkDayRollover(nowTs);
+
     switch (state) {
 
         case KALK_IDLE:
@@ -77,6 +85,7 @@ void KalkwasserScheduler::update() {
                     LOG_INFO("KalkwasserScheduler: mix time, waiting for top-off cycle");
                 } else {
                     last_mix_ts = nowTs;
+                    markMixSlotDone(nowTs);
                     saveToFRAM();
                     startMixingPump();
                     state        = KALK_MIXING;
@@ -92,6 +101,7 @@ void KalkwasserScheduler::update() {
                     LOG_INFO("KalkwasserScheduler: dose time, waiting for top-off cycle");
                 } else {
                     last_dose_ts  = nowTs;
+                    markDoseSlotDone(nowTs);
                     doseDurationS = calcDoseDurationS();
                     saveToFRAM();
                     startPeristalticPump(doseDurationS);
@@ -108,6 +118,7 @@ void KalkwasserScheduler::update() {
                 state = KALK_IDLE;
             } else if (!waterAlgorithm.isInCycle()) {
                 last_mix_ts = nowTs;
+                markMixSlotDone(nowTs);
                 saveToFRAM();
                 startMixingPump();
                 state        = KALK_MIXING;
@@ -122,6 +133,7 @@ void KalkwasserScheduler::update() {
                 state = KALK_IDLE;
             } else if (!waterAlgorithm.isInCycle()) {
                 last_dose_ts  = nowTs;
+                markDoseSlotDone(nowTs);
                 doseDurationS = calcDoseDurationS();
                 saveToFRAM();
                 startPeristalticPump(doseDurationS);
@@ -373,10 +385,59 @@ void KalkwasserScheduler::saveToFRAM() {
     cfg.flow_rate_ul_per_s = flow_rate_ul_per_s;
     cfg.last_dose_ts       = last_dose_ts;
     cfg.last_mix_ts        = last_mix_ts;
-    memset(cfg._reserved, 0, sizeof(cfg._reserved));
+    cfg.dose_done_bits     = dose_done_bits;
+    cfg.mix_done_bits      = mix_done_bits;
+    cfg.done_day           = done_day;
     framBusy = true;
     saveKalkwasserConfigToFRAM(cfg);
     framBusy = false;
+}
+
+// ============================================================
+// Daily rollover + slot done bitmask helpers
+// ============================================================
+
+static const int DOSE_HOURS_ARR[16] = {2,3,4,5,8,9,10,11,14,15,16,17,20,21,22,23};
+
+void KalkwasserScheduler::checkDayRollover(uint32_t nowTs) {
+    struct tm tm_local;
+    time_t ts = (time_t)nowTs;
+    localtime_r(&ts, &tm_local);
+    uint8_t today = (uint8_t)tm_local.tm_mday;
+    if (today != done_day) {
+        dose_done_bits = 0;
+        mix_done_bits  = 0;
+        done_day       = today;
+        saveToFRAM();
+        LOG_INFO("KalkwasserScheduler: new day (%d) — done bits cleared", today);
+    }
+}
+
+void KalkwasserScheduler::markMixSlotDone(uint32_t nowTs) {
+    struct tm tm_local;
+    time_t ts = (time_t)nowTs;
+    localtime_r(&ts, &tm_local);
+    for (int i = 0; i < 4; i++) {
+        if (tm_local.tm_hour == MIX_BASE_HOURS[i]) {
+            mix_done_bits |= (1 << i);
+            LOG_INFO("KalkwasserScheduler: mix slot %d marked done (bits=0x%02X)", i, mix_done_bits);
+            return;
+        }
+    }
+}
+
+void KalkwasserScheduler::markDoseSlotDone(uint32_t nowTs) {
+    struct tm tm_local;
+    time_t ts = (time_t)nowTs;
+    localtime_r(&ts, &tm_local);
+    for (int i = 0; i < 16; i++) {
+        if (tm_local.tm_hour == DOSE_HOURS_ARR[i]) {
+            dose_done_bits |= (1 << i);
+            LOG_INFO("KalkwasserScheduler: dose slot %d (%02d:00) marked done (bits=0x%04X)",
+                     i, tm_local.tm_hour, dose_done_bits);
+            return;
+        }
+    }
 }
 
 void KalkwasserScheduler::checkNoTopoffAlarm() {

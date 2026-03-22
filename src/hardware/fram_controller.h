@@ -110,7 +110,9 @@ struct KalkwasserConfig {
     uint32_t flow_rate_ul_per_s; // kalibracja: µl/s (30s test)
     uint32_t last_dose_ts;       // UTC timestamp ostatniej dawki
     uint32_t last_mix_ts;        // UTC timestamp ostatniego mieszania
-    uint8_t  _reserved[4];       // padding do 20 bytes
+    uint16_t dose_done_bits;     // bitmaska slotów dawkowania wykonanych dziś (bit i = DOSE_HOURS[i])
+    uint8_t  mix_done_bits;      // bitmaska slotów mieszania wykonanych dziś (bit i = MIX_BASE[i])
+    uint8_t  done_day;           // dzień miesiąca (local) dla którego bity są ważne (0 = brak)
 };
 static_assert(sizeof(KalkwasserConfig) == 20, "KalkwasserConfig must be 20 bytes");
 

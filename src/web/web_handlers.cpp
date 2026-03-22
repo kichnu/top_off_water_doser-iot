@@ -177,6 +177,8 @@ void handleStatus(AsyncWebServerRequest* request) {
     json["kalk_enabled"]            = kalkwasserScheduler.isEnabled();
     json["kalk_last_mix_ts"]        = kalkwasserScheduler.getLastMixTs();
     json["kalk_last_dose_ts"]       = kalkwasserScheduler.getLastDoseTs();
+    json["kalk_mix_done_bits"]      = kalkwasserScheduler.getMixDoneBits();
+    json["kalk_dose_done_bits"]     = kalkwasserScheduler.getDoseDoneBits();
     json["kalk_alarm"]              = kalkwasserScheduler.isNoTopoffAlarm();
     json["mixing_pump_active"]      = isMixingPumpActive();
     json["peristaltic_pump_active"] = isPeristalticPumpRunning();

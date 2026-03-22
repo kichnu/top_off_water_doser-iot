@@ -65,6 +65,8 @@ public:
     uint32_t        getDoseDurationS()   const { return doseDurationS; }
     bool            isNoTopoffAlarm()    const { return noTopoffAlarm; }
     void            clearAlarm()               { noTopoffAlarm = false; }
+    uint16_t        getDoseDoneBits()    const { return dose_done_bits; }
+    uint8_t         getMixDoneBits()     const { return mix_done_bits; }
 
     // Schedule helpers for GUI
     bool     isHourBlocked(int localHour) const;
@@ -83,6 +85,13 @@ private:
     uint32_t flow_rate_ul_per_s;
     uint32_t last_dose_ts;
     uint32_t last_mix_ts;
+    uint16_t dose_done_bits;   // bitmaska slotów dawkowania wykonanych dziś
+    uint8_t  mix_done_bits;    // bitmaska slotów mieszania wykonanych dziś
+    uint8_t  done_day;         // dzień miesiąca (local) dla którego bity obowiązują
+
+    void markMixSlotDone(uint32_t nowTs);
+    void markDoseSlotDone(uint32_t nowTs);
+    void checkDayRollover(uint32_t nowTs);
 
     bool     isMixTime(uint32_t nowTs)          const;
     bool     isDoseTime(uint32_t nowTs)          const;
