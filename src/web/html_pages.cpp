@@ -1922,7 +1922,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
         function updateKalkSchedule(rtcTs, lastMixTs, lastDoseTs, kalkState, kalkEnabled, kalkAlarm) {
             var wrap = document.getElementById('kalkScheduleWrap');
             if (!wrap) return;
-            // Always fully visible
 
             var banner = document.getElementById('kalkAlarmBanner');
             if (banner) banner.style.display = (kalkEnabled && kalkAlarm) ? '' : 'none';
@@ -1930,13 +1929,16 @@ const char* DASHBOARD_HTML = R"rawliteral(
             var now = new Date(rtcTs * 1000);
             var nowH = now.getHours();
             var nowTotalMin = nowH * 60 + now.getMinutes();
+            // UTC epoch of today's local midnight — used to compute per-slot timestamps
+            var secOfDay = nowH * 3600 + now.getMinutes() * 60 + now.getSeconds();
+            var todayMidnightTs = rtcTs - secOfDay;
 
             function sameDay(ts) {
                 if (!ts) return false;
                 var d = new Date(ts * 1000);
-                return d.getDate() === now.getDate() &&
-                       d.getMonth() === now.getMonth() &&
-                       d.getFullYear() === now.getFullYear();
+                return d.getFullYear() === now.getFullYear() &&
+                       d.getMonth()    === now.getMonth()    &&
+                       d.getDate()     === now.getDate();
             }
 
             function setTile(id, cls) {
@@ -1944,39 +1946,37 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 if (el) el.className = 'kalk-tile kalk-ev-' + cls;
             }
 
-            // Mix slots: base hours [0,6,12,18] at :15
+            // Mix slots: [0,6,12,18]:15
+            // slotDone: lastMixTs is today AND its timestamp >= this slot's scheduled UTC time.
+            // A later lastMixTs covers all earlier slots (continuous operation assumption).
             var MIX_BASES = [0, 6, 12, 18];
+            var isMixState = (kalkState === 'KALK_MIXING' || kalkState === 'KALK_SETTLING' ||
+                              kalkState === 'KALK_WAIT_TOPOFF_MIX');
             MIX_BASES.forEach(function(base, i) {
+                var slotTs  = todayMidnightTs + base * 3600 + 15 * 60;  // UTC epoch of this slot today
                 var slotMin = base * 60 + 15;
-                var mixDone = false;
-                if (lastMixTs && sameDay(lastMixTs)) {
-                    var lh = new Date(lastMixTs * 1000).getHours();
-                    if (lh >= base && lh < base + 6) mixDone = true;
-                }
-                var isMixState = (kalkState === 'KALK_MIXING' || kalkState === 'KALK_SETTLING' ||
-                                  kalkState === 'KALK_WAIT_TOPOFF_MIX');
                 var isNowSlot = (nowTotalMin >= slotMin && nowTotalMin < slotMin + 360);
+                var slotDone  = (lastMixTs && sameDay(lastMixTs) && lastMixTs >= slotTs);
                 var cls;
-                if (mixDone)                        cls = 'done';
-                else if (isMixState && isNowSlot)   cls = 'active';
-                else if (slotMin > nowTotalMin)      cls = 'pending';
-                else                                cls = 'missed';
+                if      (isMixState && isNowSlot) cls = 'active';   // yellow — mixing/settling now
+                else if (slotDone)                cls = 'done';     // green — executed today
+                else if (slotMin > nowTotalMin)   cls = 'pending';  // white — future
+                else                              cls = 'missed';   // red — past, not executed
                 setTile('kalkMix' + i, cls);
             });
 
             // Dose slots: 02-05, 08-11, 14-17, 20-23
+            // slotDone: lastDoseTs is today AND its timestamp >= this slot's h:00 UTC time.
             var DOSE_HOURS = [2,3,4,5,8,9,10,11,14,15,16,17,20,21,22,23];
             var isDosing = (kalkState === 'KALK_DOSING' || kalkState === 'KALK_WAIT_TOPOFF_DOSE');
-            var lastDoseHour = -1;
-            if (lastDoseTs && sameDay(lastDoseTs)) {
-                lastDoseHour = new Date(lastDoseTs * 1000).getHours();
-            }
             DOSE_HOURS.forEach(function(h, i) {
+                var slotTs   = todayMidnightTs + h * 3600;  // UTC epoch of this dose slot (h:00 today)
+                var slotDone = (lastDoseTs && sameDay(lastDoseTs) && lastDoseTs >= slotTs);
                 var cls;
-                if (lastDoseHour === h)          cls = 'done';
-                else if (isDosing && nowH === h) cls = 'active';
-                else if (h > nowH)               cls = 'pending';
-                else                             cls = 'missed';
+                if      (isDosing && nowH === h) cls = 'active';   // yellow — dosing now
+                else if (slotDone)               cls = 'done';     // green — executed today
+                else if (h > nowH)               cls = 'pending';  // white — future
+                else                             cls = 'missed';   // red — past, not executed
                 setTile('kalkDose' + i, cls);
             });
         }
