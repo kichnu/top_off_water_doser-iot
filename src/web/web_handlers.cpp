@@ -135,6 +135,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     json["sensor_active"] = readWaterSensor();
     json["pump_active"] = isPumpActive();
+    json["direct_pump_mode"] = isDirectPumpMode();
     json["system_error"] = (waterAlgorithm.getState() == STATE_ERROR);
     
     // ============================================
@@ -243,6 +244,36 @@ void handleDirectPumpOff(AsyncWebServerRequest* request) {
     request->send(200, "application/json", response);
 }
 
+void handleCalibrationOn(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+
+    bool success = directPumpOn(CALIBRATION_SAFETY_TIMEOUT_S);
+
+    JsonDocument json;
+    json["success"] = success;
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
+}
+
+void handleCalibrationOff(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+
+    directPumpOff();
+
+    JsonDocument json;
+    json["success"] = true;
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
+}
+
 void handlePumpStop(AsyncWebServerRequest* request) {
     if (!checkAuthentication(request)) {
         request->send(401, "text/plain", "Unauthorized");
@@ -290,8 +321,8 @@ void handlePumpSettings(AsyncWebServerRequest* request) {
         String volumeStr = request->getParam("volume_per_second", true)->value();
         float newVolume = volumeStr.toFloat();
         
-        if (newVolume < 0.1 || newVolume > 20) {
-            request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be between 0.1-20\"}");
+        if (newVolume < 0.003 || newVolume > 100) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be between 0.1-3000 ml/30s\"}");
             return;
         }
         
@@ -482,9 +513,14 @@ void handleResetDailyVolume(AsyncWebServerRequest* request) {
         return;
     }
 
-    // Rolling 24h window resets automatically — no manual reset supported
-    request->send(501, "application/json",
-        "{\"success\":false,\"error\":\"Not supported — rolling 24h window resets automatically\"}");
+    waterAlgorithm.resetRolling24h();
+
+    JsonDocument json;
+    json["success"] = true;
+    json["rolling_24h_ml"] = waterAlgorithm.getRolling24hVolume();
+    String response;
+    serializeJson(json, response);
+    request->send(200, "application/json", response);
 }
 
 // ===============================

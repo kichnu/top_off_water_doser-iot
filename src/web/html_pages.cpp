@@ -481,9 +481,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
             display: flex;
             align-items: center;
             justify-content: center;
-            height: 48px;
+            // height: 48px;
             gap: 8px;
-            padding: 14px 20px;
+            padding: 10px 20px;
             border-radius: var(--radius-sm);
             font-family: inherit;
             font-size: 0.9rem;
@@ -541,8 +541,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
         .btn-small {
             padding: 10px 16px;
             font-size: 0.8rem;
-            margin-top: 10px;
-            /* margin-right: 4px; */
         }
 
         .btn-small:nth-of-type(2){
@@ -577,7 +575,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
             border-radius: var(--radius-sm);
             padding: 16px;
             display: flex;
-            min-height: 245px;
             flex-direction: column;
             gap: 12px;
         }
@@ -947,9 +944,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
             <div class="stats-columns">
 
-                <!-- Column 1: Daily Refill Limit -->
+                <!-- Column 1: Rolling 24h Refill Limit -->
                 <div class="stat-column">
-                    <h3>Daily Refill Limit</h3>
+                    <h3>Rolling 24h Refill Limit</h3>
                     <div class="stat-content">
                         <div class="volume-indicator">
                             <div class="volume-bar">
@@ -963,6 +960,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     </div>
                     <div class="stat-daily">
                         <button class="btn btn-secondary btn-small" onclick="setDailyLimit()">Set</button>
+                        <button class="btn btn-off btn-small" onclick="resetDailyVolume()" style="margin-left:6px;">Reset</button>
                     </div>
                 </div>
 
@@ -1051,11 +1049,14 @@ const char* DASHBOARD_HTML = R"rawliteral(
             <div class="card-subheader">ATO Pump Calibration</div>
             <div class="settings-row">
                 <div class="setting-item">
-                    <button id="extendedBtn" class="btn btn-secondary" onclick="triggerExtendedPump()">Start Calibration (30s)</button>
+                    <button id="extendedBtn" class="btn btn-off" onclick="toggleAtoCalibration()">Calibration OFF</button>
                 </div>
                 <div class="setting-item input-group">
-                    <label for="volumePerSecond" style="text-align: center;">Mililiters per Second</label>
-                    <input class="volumePerSecond" type="number" id="volumePerSecond" min="0.1" max="50.0" step="0.1" value="1.0">
+                    <label for="calibrationMl" style="text-align: center;">Mililiters</label>
+                    <input type="number" id="calibrationMl" min="1" max="3000" step="1" placeholder="—">
+                    <label for="calibrationSeconds" style="text-align: center;">Seconds</label>
+                    <input type="number" id="calibrationSeconds" min="0" max="3600" step="1" value="0" readonly>
+                    <small id="calibrationCurrent" style="color:#aaa; margin-top:4px;">current: —</small>
                 </div>
                 <div class="setting-item">
                     <button class="btn btn-primary" onclick="updateVolumePerSecond()">Update Setting</button>
@@ -1068,7 +1069,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     <button id="kalkCalibBtn" class="btn btn-secondary" onclick="startKalkCalibration()">Start Calibration (30s)</button>
                 </div>
                 <div class="setting-item input-group">
-                    <label for="kalkMeasuredMl" style="text-align: center;">Volume measured (ml in 30s)</label>
+                    <label for="kalkMeasuredMl" style="text-align: center;">Mililiters per 30 Seconds)</label>
                     <input type="number" id="kalkMeasuredMl" min="0.1" max="500" step="0.1" placeholder="15.3">
                 </div>
                 <div class="setting-item">
@@ -1378,60 +1379,89 @@ const char* DASHBOARD_HTML = R"rawliteral(
         }
 
         // ============================================
-        // EXTENDED PUMP (Calibration) — uses direct pump
+        // ATO CALIBRATION (bistable toggle)
         // ============================================
-        function triggerExtendedPump() {
-            const btn = document.getElementById("extendedBtn");
-            btn.disabled = true;
-            btn.textContent = "Starting...";
+        let calibrationActive  = false;
+        let calibrationTimer   = null;
+        let calibrationElapsed = 0;
 
-            fetch("api/pump/direct-on", { method: "POST" })
-                .then((response) => response.json())
-                .then((data) => {
-                    if (!data.success) console.error("Failed to start calibration pump");
-                })
-                .catch((e) => console.error("Calibration pump error:", e))
-                .finally(() => {
-                    btn.disabled = false;
-                    btn.textContent = "Start Calibration";
-                });
+        function toggleAtoCalibration() {
+            const btn = document.getElementById("extendedBtn");
+            if (!calibrationActive) {
+                btn.disabled = true;
+                fetch("api/pump/calibration-on", { method: "POST" })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            calibrationActive  = true;
+                            calibrationElapsed = 0;
+                            document.getElementById("calibrationSeconds").value = 0;
+                            updateAtoCalibBtn(true);
+                            calibrationTimer = setInterval(() => {
+                                calibrationElapsed++;
+                                document.getElementById("calibrationSeconds").value = calibrationElapsed;
+                            }, 1000);
+                        }
+                    })
+                    .catch(e => console.error("Calibration start error:", e))
+                    .finally(() => { btn.disabled = false; });
+            } else {
+                btn.disabled = true;
+                clearInterval(calibrationTimer);
+                calibrationTimer  = null;
+                calibrationActive = false;
+                updateAtoCalibBtn(false);
+                fetch("api/pump/calibration-off", { method: "POST" })
+                    .catch(e => console.error("Calibration stop error:", e))
+                    .finally(() => { btn.disabled = false; });
+            }
+        }
+
+        function updateAtoCalibBtn(isOn) {
+            const btn = document.getElementById("extendedBtn");
+            if (!btn) return;
+            btn.textContent = isOn ? "Calibration ON" : "Calibration OFF";
+            btn.className   = "btn " + (isOn ? "btn-primary" : "btn-off");
         }
 
         // ============================================
         // VOLUME SETTINGS
         // ============================================
         function loadVolumePerSecond() {
-            fetch("api/pump-settings")
-                .then((response) => response.json())
-                .then((data) => {
-                    if (data.success) {
-                        document.getElementById("volumePerSecond").value = parseFloat(data.volume_per_second).toFixed(1);
+            secureFetch("api/pump-settings")
+                .then(r => { if (!r) return null; return r.json(); })
+                .then(data => {
+                    if (!data || !data.success) return;
+                    const vps = parseFloat(data.volume_per_second);
+                    if (vps > 0) {
+                        const el = document.getElementById("calibrationCurrent");
+                        if (el) el.textContent = "current: " + vps.toFixed(2) + " ml/s";
                     }
                 })
-                .catch((error) => {
-                    console.error("Failed to load volume setting:", error);
-                });
+                .catch(e => console.error("Failed to load pump settings:", e));
         }
 
         function updateVolumePerSecond() {
-            const volumeInput = document.getElementById("volumePerSecond");
-            const volumeValue = parseFloat(volumeInput.value);
+            const ml  = parseInt(document.getElementById("calibrationMl").value, 10);
+            const sec = parseInt(document.getElementById("calibrationSeconds").value, 10);
 
-            if (volumeValue < 0.1 || volumeValue > 50.0) return;
+            if (isNaN(ml) || ml <= 0 || isNaN(sec) || sec <= 0) {
+                alert("Run calibration first: Mililiters and Seconds must both be greater than 0.");
+                return;
+            }
 
-            const formData = new FormData();
-            formData.append("volume_per_second", volumeValue);
-
-            fetch("api/pump-settings", { method: "POST", body: formData })
-                .then((response) => response.json())
-                .then((data) => {
+            fetch("api/pump-settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: "volume_per_second=" + (ml / sec)
+            })
+                .then(r => r.json())
+                .then(data => {
                     if (data.success) {
-                        volumeInput.value = volumeValue.toFixed(1);
+                        loadVolumePerSecond();
                     }
                 })
-                .catch((error) => {
-                    statusSpan.textContent = "Network error";
-                });
+                .catch(e => console.error("Failed to update pump settings:", e));
         }
 
         // ============================================
@@ -1559,7 +1589,18 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
                     const extendedBtn = document.getElementById("extendedBtn");
                     if (extendedBtn) {
-                        extendedBtn.disabled = data.pump_active;
+                        // Sync calibration state on page reload
+                        if (data.direct_pump_mode && !calibrationActive) {
+                            calibrationActive = true;
+                            updateAtoCalibBtn(true);
+                        } else if (!data.direct_pump_mode && calibrationActive) {
+                            calibrationActive = false;
+                            clearInterval(calibrationTimer);
+                            calibrationTimer = null;
+                            updateAtoCalibBtn(false);
+                        }
+                        // Disable only when algo pump is active (not during user calibration)
+                        extendedBtn.disabled = data.pump_active && !calibrationActive;
                     }
 
                     // Kalkwasser schedule update
@@ -1592,7 +1633,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     const limit    = data.daily_limit_ml;
                     const dose     = data.dose_ml;
 
-                    // Daily Refill Limit bar
+                    // Rolling 24h Refill Limit bar
                     const pctUsed = limit > 0 ? Math.min((rolling / limit) * 100, 100) : 0;
                     document.getElementById("volumeBarFill").style.width = pctUsed + "%";
                     document.getElementById("volumeText").textContent = rolling + " ml / " + limit + " ml";
@@ -1634,6 +1675,20 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .catch((e) => console.error("Set daily limit error:", e));
         }
 
+
+        // ============================================
+        // RESET DAILY VOLUME
+        // ============================================
+        function resetDailyVolume() {
+            if (!confirm("Reset rolling 24h counter to 0?")) return;
+            secureFetch("api/reset-daily-volume", { method: "POST" })
+                .then((r) => { if (!r) return null; return r.json(); })
+                .then((data) => {
+                    if (data && data.success) loadDailyVolume();
+                    else console.error("Reset daily volume failed:", data && data.error);
+                })
+                .catch((e) => console.error("Reset daily volume error:", e));
+        }
 
         // ============================================
         // SET SINGLE DOSE

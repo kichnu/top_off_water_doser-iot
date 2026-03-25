@@ -24,6 +24,10 @@ void handleDirectPumpOn(AsyncWebServerRequest *request);
 void handleDirectPumpOff(AsyncWebServerRequest *request);
 void handlePumpSettings(AsyncWebServerRequest *request);
 
+// ATO calibration pump (bistable, user-controlled, safety timeout 1h)
+void handleCalibrationOn(AsyncWebServerRequest *request);
+void handleCalibrationOff(AsyncWebServerRequest *request);
+
 // ============== SYSTEM TOGGLE ==============
 // Replaces old pump toggle with full system control
 void handleSystemToggle(AsyncWebServerRequest *request);

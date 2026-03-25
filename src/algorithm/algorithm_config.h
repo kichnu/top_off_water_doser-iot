@@ -86,7 +86,7 @@ struct TopOffRecord {
     uint8_t  alert_level;     // 0 = OK, 1 = ŻÓŁTY (warning), 2 = CZERWONY (error)
     uint8_t  hour_of_day;     // Godzina lokalna (0–23) — analiza rytmu dobowego parowania
     uint8_t  flags;           // Bitmaska flag (patrz poniżej)
-    uint8_t  _pad[2];         // Wyrównanie do wielokrotności 4 bajtów
+    uint16_t dose_ml_record;  // Dawka [ml] dla tego cyklu — 0 = backward compat (użyj config.dose_ml)
 
     // Flags bitmask
     static const uint8_t FLAG_MANUAL    = 0x01;  // Dolewka wyzwolona ręcznie z GUI

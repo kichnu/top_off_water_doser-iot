@@ -21,6 +21,8 @@ void initWebServer() {
     server.on("/api/status", HTTP_GET, handleStatus);
     server.on("/api/pump/direct-on", HTTP_POST, handleDirectPumpOn);
     server.on("/api/pump/direct-off", HTTP_POST, handleDirectPumpOff);
+    server.on("/api/pump/calibration-on", HTTP_POST, handleCalibrationOn);
+    server.on("/api/pump/calibration-off", HTTP_POST, handleCalibrationOff);
     server.on("/api/pump/stop", HTTP_POST, handlePumpStop);
     server.on("/api/pump-settings", HTTP_GET | HTTP_POST, handlePumpSettings);
     

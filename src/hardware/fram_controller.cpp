@@ -42,31 +42,39 @@ bool initFRAM() {
     LOG_INFO("");
     LOG_INFO("FRAM initialized successfully (256Kbit = 32KB)");
     
-    // Verify FRAM integrity
+    // Verify FRAM integrity — only resets what is actually broken
     if (!verifyFRAM()) {
         LOG_WARNING("");
-        LOG_WARNING("FRAM not initialized or corrupted, initializing...");
-        
+        LOG_WARNING("FRAM magic/version mismatch — reinitializing header");
+
         // Write magic number
         uint32_t magic = FRAM_MAGIC_NUMBER;
         fram.write(FRAM_ADDR_MAGIC, (uint8_t*)&magic, 4);
-        
+
         // Write version
         uint16_t version = FRAM_DATA_VERSION;
         fram.write(FRAM_ADDR_VERSION, (uint8_t*)&version, 2);
-        
-        // Write default volume
-        float defaultVolume = 1.0;
-        fram.write(FRAM_ADDR_VOLUME_ML, (uint8_t*)&defaultVolume, 4);
-        
-        // Calculate and write checksum
-        uint8_t buffer[4];
-        fram.read(FRAM_ADDR_VOLUME_ML, buffer, 4);
-        uint16_t checksum = calculateChecksum(buffer, 4);
-        fram.write(FRAM_ADDR_CHECKSUM, (uint8_t*)&checksum, 2);
-        
-        LOG_INFO("");
-        LOG_INFO("FRAM initialized with defaults");
+
+        LOG_INFO("FRAM header written");
+    }
+
+    // Volume checksum check — log only, do NOT overwrite FRAM
+    // Destructive overwrite here would permanently erase calibration on any I2C transient at boot.
+    // loadVolumeFromFRAM() handles fallback to RAM default (1.0f) without touching FRAM.
+    {
+        uint8_t vbuf[4];
+        fram.read(FRAM_ADDR_VOLUME_ML, vbuf, 4);
+        uint16_t vcalc = calculateChecksum(vbuf, 4);
+        uint16_t vstored = 0;
+        fram.read(FRAM_ADDR_CHECKSUM, (uint8_t*)&vstored, 2);
+
+        if (vcalc != vstored) {
+            LOG_WARNING("Volume checksum mismatch (calc=%u stored=%u) — loadVolumeFromFRAM will use RAM default", vcalc, vstored);
+        } else {
+            float vloaded;
+            memcpy(&vloaded, vbuf, 4);
+            LOG_INFO("Volume checksum OK: %.4f ml/s", vloaded);
+        }
     }
 
     // Validate cycle metadata against FRAM_MAX_CYCLES (handles 200→30 transition)
@@ -129,20 +137,6 @@ bool verifyFRAM() {
         return false;
     }
     
-    // Verify ESP32 data checksum
-    uint8_t buffer[4];
-    fram.read(FRAM_ADDR_VOLUME_ML, buffer, 4);
-    uint16_t calculatedChecksum = calculateChecksum(buffer, 4);
-    
-    uint16_t storedChecksum = 0;
-    fram.read(FRAM_ADDR_CHECKSUM, (uint8_t*)&storedChecksum, 2);
-    
-    if (calculatedChecksum != storedChecksum) {
-        LOG_WARNING("");
-        LOG_WARNING("ESP32 data checksum mismatch: stored=%d, calculated=%d", 
-                    storedChecksum, calculatedChecksum);
-        return false;
-    }
     LOG_INFO("");
     LOG_INFO("FRAM verification successful (unified layout v%d)", FRAM_DATA_VERSION);
     return true;
@@ -168,15 +162,16 @@ bool loadVolumeFromFRAM(float& volume) {
     
     if (calculatedChecksum != storedChecksum) {
         LOG_ERROR("");
-        LOG_ERROR("FRAM checksum error when loading volume!");
+        LOG_ERROR("FRAM checksum error! bytes=[%02X %02X %02X %02X] calc=%u stored=%u",
+                  buffer[0], buffer[1], buffer[2], buffer[3], calculatedChecksum, storedChecksum);
         return false;
     }
     
-    // Sanity check the value
-    if (volume < 0.1 || volume > 20.0) {
+    // Sanity check the value — matches handler range (0.003–100 ml/s)
+    if (volume < 0.003f || volume > 100.0f) {
         LOG_WARNING("");
-        LOG_WARNING("FRAM volume out of range: %.2f, using default", volume);
-        volume = 1.0;
+        LOG_WARNING("FRAM volume out of range: %.4f, using default", volume);
+        volume = 1.0f;
         return false;
     }
     LOG_INFO("");
@@ -191,13 +186,13 @@ bool saveVolumeToFRAM(float volume) {
         return false;
     }
     
-    // Sanity check
-    if (volume < 0.1 || volume > 20.0) {
+    // Sanity check — matches handler range (0.003–100 ml/s)
+    if (volume < 0.003f || volume > 100.0f) {
         LOG_ERROR("");
-        LOG_ERROR("Invalid volume value: %.2f", volume);
+        LOG_ERROR("Invalid volume value: %.4f", volume);
         return false;
     }
-    
+
     // Write volume
     fram.write(FRAM_ADDR_VOLUME_ML, (uint8_t*)&volume, 4);
     
@@ -207,18 +202,26 @@ bool saveVolumeToFRAM(float volume) {
     uint16_t checksum = calculateChecksum(buffer, 4);
     fram.write(FRAM_ADDR_CHECKSUM, (uint8_t*)&checksum, 2);
     
-    // Verify write by reading back
+    // Verify write: float value
     float readBack = 0;
     fram.read(FRAM_ADDR_VOLUME_ML, (uint8_t*)&readBack, 4);
-    
-    if (abs(readBack - volume) > 0.01) {
+    if (abs(readBack - volume) > 0.01f) {
         LOG_ERROR("");
-        LOG_ERROR("FRAM write verification failed! Wrote: %.2f, Read: %.2f", 
-                  volume, readBack);
+        LOG_ERROR("FRAM float write verification failed! Wrote: %.4f, Read: %.4f", volume, readBack);
         return false;
     }
+
+    // Verify write: checksum
+    uint16_t readBackChk = 0;
+    fram.read(FRAM_ADDR_CHECKSUM, (uint8_t*)&readBackChk, 2);
+    if (readBackChk != checksum) {
+        LOG_ERROR("");
+        LOG_ERROR("FRAM checksum write verification failed! Wrote: %u, Read: %u", checksum, readBackChk);
+        return false;
+    }
+
     LOG_INFO("");
-    LOG_INFO("SUCCESS: Saved volume to FRAM: %.1f ml/s", volume);
+    LOG_INFO("SUCCESS: Saved volume to FRAM: %.4f ml/s (checksum=%u)", volume, checksum);
     return true;
 }
 

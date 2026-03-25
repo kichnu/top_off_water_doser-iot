@@ -32,6 +32,7 @@ private:
 
     // ---- Rolling 24h (cache, przeliczany po każdym cyklu) ----
     uint16_t rolling24hVolumeMl;
+    uint32_t manualResetTs;   // RAM-only: ignore records older than this (0 = inactive)
 
     // ---- Konfiguracja (FRAM lub defaults) ----
     TopOffConfig config;
@@ -119,6 +120,7 @@ public:
     void resetFromError();
     bool resetSystem();
     bool resetCycleHistory();  // Czyści ring buffer FRAM + in-memory EMA
+    void resetRolling24h();    // RAM-only reset: zeruje licznik dobowy bez kasowania historii
 
     // ---- System disable ----
     bool wasSystemDisabled() const { return systemWasDisabled; }

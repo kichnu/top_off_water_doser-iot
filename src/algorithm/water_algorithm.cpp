@@ -22,6 +22,7 @@ WaterAlgorithm::WaterAlgorithm() {
     lastTopOffTimestamp = 0;
     totalCycleCount     = 0;
     rolling24hVolumeMl  = 0;
+    manualResetTs       = 0;
 
     config.dose_ml           = DEFAULT_DOSE_ML;
     config.daily_limit_ml    = DEFAULT_DAILY_LIMIT_ML;
@@ -242,6 +243,23 @@ void WaterAlgorithm::onDebounceReset() {
 // ============================================================
 
 void WaterAlgorithm::startAutoPump() {
+    if (isDirectPumpMode()) {
+        LOG_INFO("Auto pump deferred — calibration/direct mode active, returning to IDLE");
+        currentState = STATE_IDLE;
+        stateStartMs = millis();
+        resetSensorProcess();
+        return;
+    }
+
+    // Pre-check: jeśli limit jest już przekroczony PRZED dolewką — nie pompuj
+    rolling24hVolumeMl = scanRolling24h();
+    if (rolling24hVolumeMl >= config.daily_limit_ml) {
+        LOG_WARNING("DAILY LIMIT PRE-CHECK: %d >= %d ml — dose skipped → ERROR",
+                    rolling24hVolumeMl, config.daily_limit_ml);
+        startErrorSignal(ERROR_DAILY_LIMIT);
+        return;
+    }
+
     uint16_t doseTimeS = calculateDoseTime(config.dose_ml, currentPumpSettings.volumePerSecond);
 
     LOG_INFO("");
@@ -331,6 +349,7 @@ void WaterAlgorithm::finishPumpCycle() {
     record.alert_level    = alertLevel;
     record.hour_of_day    = hourOfDay;
     record.flags          = 0;
+    record.dose_ml_record = config.dose_ml;  // store actual dose so rolling24h survives dose_ml changes
     if (ema.bootstrap_count <= DEFAULT_MIN_BOOTSTRAP) record.flags |= TopOffRecord::FLAG_BOOTSTRAP;
     if (redAlertHit)                                  record.flags |= TopOffRecord::FLAG_RED_ALERT;
 
@@ -432,16 +451,26 @@ uint16_t WaterAlgorithm::scanRolling24h() const {
     uint32_t nowTs    = getUnixTimestamp();
     uint32_t windowS  = config.history_window_s;
     uint32_t cutoffTs = (nowTs > windowS) ? (nowTs - windowS) : 0;
+    // manual reset: use more recent of 24h window or manual reset timestamp
+    if (manualResetTs > cutoffTs) cutoffTs = manualResetTs;
 
     uint16_t total = 0;
     TopOffRecord records[TOPOFF_HISTORY_SIZE];
     uint16_t count = loadTopOffHistory(records, TOPOFF_HISTORY_SIZE);
 
+    uint16_t inWindow = 0;
     for (uint16_t i = 0; i < count; i++) {
         if (records[i].timestamp >= cutoffTs) {
-            total += config.dose_ml;  // Każdy rekord = jedna stała dawka
+            // Use per-record dose if available (new records); fall back to config for old records
+            uint16_t d = (records[i].dose_ml_record > 0) ? records[i].dose_ml_record : config.dose_ml;
+            total += d;
+            inWindow++;
         }
     }
+
+    LOG_INFO("scanRolling24h: nowTs=%lu cutoff=%lu total=%d records, %d in window → %d ml",
+             nowTs, cutoffTs, count, inWindow, total);
+
     return total;
 }
 
@@ -596,6 +625,13 @@ bool WaterAlgorithm::resetCycleHistory() {
 
     LOG_INFO("WaterAlgorithm: cycle history and EMA reset");
     return ok;
+}
+
+void WaterAlgorithm::resetRolling24h() {
+    manualResetTs      = getUnixTimestamp();
+    rolling24hVolumeMl = scanRolling24h();  // = 0 (all records now before cutoff)
+    LOG_INFO("Rolling 24h manually reset — manualResetTs=%lu rolling=%d ml",
+             manualResetTs, rolling24hVolumeMl);
 }
 
 // ============================================================

@@ -10,11 +10,11 @@
 //       MIXING_PUMP_RELAY_PIN   GPIO  3  ──┤                ├── GND
 //          ATO_PUMP_RELAY_PIN   GPIO  4  ──┤                ├── 3.3V
 //                   RESET_PIN   GPIO  5  ──┤                ├── GPIO 10  
-//                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  ERROR_SIGNAL_PIN 
-//                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8 
+//                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  DFPLAYER_TX_PIN (UART TX) 
+//                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8  DFPLAYER_RX_PIN (UART RX)
 //  AVAILABLE_WATER_SENSOR_PIN   GPIO 21  ──┤                ├── GPIO 20  WATER_SENSOR_PIN 
 //                                          └────────────────┘
-//                       
+//               
 //
 // ============================================================
 
