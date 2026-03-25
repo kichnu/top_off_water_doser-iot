@@ -4,6 +4,7 @@
 #include "../security/session_manager.h"
 #include "../security/rate_limiter.h"
 #include "../security/auth_manager.h"
+#include "../config/credentials_manager.h"
 #include "../core/logging.h"
 
 AsyncWebServer server(80);
@@ -85,9 +86,17 @@ void initWebServer() {
 bool checkAuthentication(AsyncWebServerRequest* request) {
     IPAddress clientIP = request->client()->remoteIP();
     
-    // ============== TRUSTED PROXY CHECK (PRIORITY) ==============
-    // VPS proxy requests skip all authentication
+    // ============== TRUSTED PROXY CHECK ==============
+    // VPS proxy requests must present a matching X-Proxy-Token header
     if (isTrustedProxy(clientIP)) {
+        const char* storedToken = getVPSAuthToken();
+        bool tokenOk = storedToken && strlen(storedToken) > 0
+                       && request->hasHeader("X-Proxy-Token")
+                       && request->getHeader("X-Proxy-Token")->value() == storedToken;
+        if (!tokenOk) {
+            LOG_WARNING("Trusted proxy IP %s — X-Proxy-Token missing or invalid", clientIP.toString().c_str());
+            return false;
+        }
         return true;
     }
     
