@@ -28,12 +28,7 @@ void handlePumpSettings(AsyncWebServerRequest *request);
 void handleCalibrationOn(AsyncWebServerRequest *request);
 void handleCalibrationOff(AsyncWebServerRequest *request);
 
-// ============== SYSTEM TOGGLE ==============
-// Replaces old pump toggle with full system control
 void handleSystemToggle(AsyncWebServerRequest *request);
-
-// LEGACY - kept for compatibility, will be removed
-void handlePumpToggle(AsyncWebServerRequest *request);
 
 // Statistics handlers
 void handleResetStatistics(AsyncWebServerRequest *request);

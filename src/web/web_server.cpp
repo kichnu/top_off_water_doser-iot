@@ -27,12 +27,7 @@ void initWebServer() {
     server.on("/api/pump/stop", HTTP_POST, handlePumpStop);
     server.on("/api/pump-settings", HTTP_GET | HTTP_POST, handlePumpSettings);
     
-    // ============== SYSTEM TOGGLE (NEW) ==============
-    // Replaces pump-toggle with full system control
     server.on("/api/system-toggle", HTTP_GET | HTTP_POST, handleSystemToggle);
-    
-    // LEGACY - kept for compatibility, will be removed
-    server.on("/api/pump-toggle", HTTP_GET | HTTP_POST, handlePumpToggle);
     
     // Statistics endpoints
     server.on("/api/reset-statistics", HTTP_POST, handleResetStatistics);
