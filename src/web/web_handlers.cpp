@@ -81,7 +81,7 @@ void handleLogin(AsyncWebServerRequest* request) {
     
     if (verifyPassword(password)) {
         String token = createSession(clientIP);
-        String cookie = "session_token=" + token + "; Path=/; HttpOnly; Max-Age=" + String(SESSION_TIMEOUT_MS / 1000);
+        String cookie = "session_token=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + String(SESSION_TIMEOUT_MS / 1000);
         
         AsyncWebServerResponse* response = request->beginResponse(200, "application/json", "{\"success\":true}");
         response->addHeader("Set-Cookie", cookie);
@@ -118,7 +118,7 @@ void handleLogout(AsyncWebServerRequest* request) {
     }
     
     AsyncWebServerResponse* response = request->beginResponse(200, "application/json", "{\"success\":true}");
-    response->addHeader("Set-Cookie", "session_token=; Path=/; HttpOnly; Max-Age=0");
+    response->addHeader("Set-Cookie", "session_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
     request->send(response);
 }
 
