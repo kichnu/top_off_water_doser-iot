@@ -13,6 +13,7 @@
 //   003.mp3 — ERROR_BOTH            — limit dobowy i anomalia
 //   004.mp3 — ERROR_LOW_RESERVOIR   — krytycznie niski poziom wody
 //   005.mp3 — WARN_LOW_RESERVOIR    — niski poziom wody (ostrzeżenie)
+//   006.mp3 — PROVISIONING          — odliczanie + "system gotowy do konfiguracji"
 //
 // Błędy (STATE_ERROR): odtwarzane w pętli z przerwą AUDIO_REPEAT_INTERVAL_MS.
 // Ostrzeżenia (isLowReservoirWarning): odtwarzane z przerwą, system działa.
@@ -23,6 +24,7 @@
 #define AUDIO_REPEAT_INTERVAL_MS 5000    // Przerwa między powtórzeniami [ms]
 
 #define AUDIO_TRACK_WARN_LOW_RESERVOIR  5   // numer pliku dla ostrzeżenia
+#define AUDIO_TRACK_PROVISIONING        6   // numer pliku dla trybu provisioning
 
 class AudioPlayer {
 public:

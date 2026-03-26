@@ -12,11 +12,8 @@
 #define PROV_BUTTON_HOLD_MS     5000    // Hold time to enter provisioning (5 seconds)
 #define PROV_BUTTON_DEBOUNCE_MS 100     // Debounce time
 
-// Audio/Visual feedback during button hold
-#define PROV_FEEDBACK_PIN       8       // ERROR_SIGNAL_PIN (GPIO8) for beep feedback
-#define PROV_BEEP_HIGH_MS       10      // High state duration
-#define PROV_BEEP_LOW_MS        100     // Low state duration
-#define PROV_HOLD_MARGIN_MS     500     // Extra time margin for feedback
+// Audio feedback during button hold (DFPlayer Pro)
+#define PROV_AUDIO_TRACK        6       // 006.mp3 — odliczanie + "system gotowy do konfiguracji"
 
 // Access Point Configuration
 #define PROV_AP_SSID            "ESP32-WATER-SETUP"

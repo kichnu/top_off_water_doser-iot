@@ -728,13 +728,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
         /* Cycle History Charts */
         .chart-wrap { margin-top: 12px; }
-        .chart-sublabel {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin: 10px 0 4px;
-        }
         .chart-sublabel:first-child { margin-top: 0; }
         .chart-rate-scroll {
             overflow-x: hidden;
@@ -1013,14 +1006,13 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <div class="card-header-icon" style="background: rgba(34, 211, 213, 0.15);">
                     <svg fill="currentColor" style="color: #22d3d5;" viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
                 </div>
-                <h2>Cycle History</h2>
+                <h2>Evaporation rate (ml/h)</h2>
             </div>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
                 <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="flex:1;">Load History</button>
                 <button class="btn btn-secondary" onclick="deleteCycleHistory()" id="deleteCyclesBtn" style="flex:1;color:#f87171;border-color:rgba(248,113,113,0.3);">Delete Data</button>
             </div>
             <div class="chart-wrap">
-                <div class="chart-sublabel">Evaporation rate (ml/h) per cycle</div>
                 <div id="chartRateScroll" class="chart-rate-scroll">
                     <canvas id="chartRate"></canvas>
                 </div>
