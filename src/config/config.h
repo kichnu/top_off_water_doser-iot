@@ -16,8 +16,6 @@ extern const char* WIFI_PASSWORD;
 extern const char* ADMIN_PASSWORD_HASH;
 extern const IPAddress ALLOWED_IPS[];
 extern const int ALLOWED_IPS_COUNT;
-extern const char* VPS_URL;
-extern const char* VPS_AUTH_TOKEN;
 extern const char* DEVICE_ID;
 
 // ================= TRUSTED PROXY (WireGuard VPS) =================
@@ -73,7 +71,6 @@ void initNVS();
 #define WIFI_SSID_DYNAMIC getWiFiSSID()
 #define WIFI_PASSWORD_DYNAMIC getWiFiPassword()
 #define ADMIN_PASSWORD_HASH_DYNAMIC getAdminPasswordHash()
-#define VPS_AUTH_TOKEN_DYNAMIC getVPSAuthToken()
 #define DEVICE_ID_DYNAMIC getDeviceID()
 
 #endif

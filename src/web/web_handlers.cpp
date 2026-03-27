@@ -190,7 +190,6 @@ void handleStatus(AsyncWebServerRequest* request) {
     // ============================================
     json["device_id"] = getDeviceID();
     json["credentials_source"] = areCredentialsLoaded() ? "FRAM" : "FALLBACK";
-    json["vps_url"] = getVPSURL();
     json["authentication_enabled"] = areCredentialsLoaded();
     
     if (!areCredentialsLoaded()) {

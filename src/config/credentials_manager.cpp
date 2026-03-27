@@ -15,8 +15,6 @@ bool initCredentialsManager() {
     dynamicCredentials.wifi_ssid = "";
     dynamicCredentials.wifi_password = "";
     dynamicCredentials.admin_password_hash = "";
-    dynamicCredentials.vps_auth_token = "";
-    dynamicCredentials.vps_url = "";
     dynamicCredentials.device_id = "";
     dynamicCredentials.loaded_from_fram = false;
     
@@ -67,11 +65,10 @@ bool loadCredentialsFromFRAM() {
     }
     
     // Validate decrypted credentials
-    if (creds.device_name.length() == 0 || 
-        creds.wifi_ssid.length() == 0 || 
+    if (creds.device_name.length() == 0 ||
+        creds.wifi_ssid.length() == 0 ||
         creds.wifi_password.length() == 0 ||
-        creds.admin_password.length() == 0 ||
-        creds.vps_token.length() == 0) {
+        creds.admin_password.length() == 0) {
         LOG_ERROR("");
         LOG_ERROR("Decrypted credentials are incomplete");
         return false;
@@ -81,21 +78,8 @@ bool loadCredentialsFromFRAM() {
     dynamicCredentials.wifi_ssid = creds.wifi_ssid;
     dynamicCredentials.wifi_password = creds.wifi_password;
     dynamicCredentials.admin_password_hash = creds.admin_password;  // Already hashed
-    dynamicCredentials.vps_auth_token = creds.vps_token;
     dynamicCredentials.device_id = creds.device_name;
     dynamicCredentials.loaded_from_fram = true;
-    
-    // Handle VPS_URL (backward compatibility)
-    if (fram_creds.version >= 0x0003 && creds.vps_url.length() > 0) {
-        dynamicCredentials.vps_url = creds.vps_url;
-        LOG_INFO("");
-        LOG_INFO("VPS URL loaded from FRAM: %s", dynamicCredentials.vps_url.substring(0, 30).c_str());
-    } else {
-        // Fallback to hardcoded VPS_URL for older versions
-        dynamicCredentials.vps_url = String(VPS_URL);
-        LOG_WARNING("");
-        LOG_WARNING("Using fallback VPS_URL (FRAM version %d)", fram_creds.version);
-    }
     LOG_INFO("");
     LOG_INFO("====================================");
     LOG_INFO("🔐 Dynamic credentials loaded:");
@@ -103,8 +87,6 @@ bool loadCredentialsFromFRAM() {
     LOG_INFO("  WiFi SSID: %s", dynamicCredentials.wifi_ssid.c_str());
     LOG_INFO("  WiFi Password: ******* (%d chars)", dynamicCredentials.wifi_password.length());
     LOG_INFO("  Admin Hash: %s", dynamicCredentials.admin_password_hash.substring(0, 16).c_str());
-    LOG_INFO("  VPS Token: %s...", dynamicCredentials.vps_auth_token.substring(0, 16).c_str());
-    LOG_INFO("  VPS URL: %s", dynamicCredentials.vps_url.c_str());
     LOG_INFO("====================================");
     
     return true;
@@ -124,8 +106,6 @@ void fallbackToHardcodedCredentials() {
     // Use placeholder credentials from config.h - NOT FUNCTIONAL!
     dynamicCredentials.wifi_ssid = String(WIFI_SSID);
     dynamicCredentials.wifi_password = String(WIFI_PASSWORD);
-    dynamicCredentials.vps_auth_token = String(VPS_AUTH_TOKEN);
-    dynamicCredentials.vps_url = String(VPS_URL);
     dynamicCredentials.device_id = String(DEVICE_ID);
     dynamicCredentials.loaded_from_fram = false;
     
@@ -141,7 +121,6 @@ void fallbackToHardcodedCredentials() {
     LOG_INFO("📌 Placeholder fallback credentials (NON-FUNCTIONAL):");
     LOG_INFO("  Device ID: %s", dynamicCredentials.device_id.c_str());
     LOG_INFO("  WiFi SSID: %s", dynamicCredentials.wifi_ssid.c_str());
-    LOG_INFO("  VPS URL: %s", dynamicCredentials.vps_url.c_str());
     LOG_INFO("  Admin Hash: %s", dynamicCredentials.admin_password_hash.c_str());
     LOG_WARNING("🔧 Program FRAM credentials to enable web authentication!");
     LOG_INFO("====================================");
@@ -158,14 +137,6 @@ const char* getWiFiPassword() {
 
 const char* getAdminPasswordHash() {
     return dynamicCredentials.admin_password_hash.c_str();
-}
-
-const char* getVPSAuthToken() {
-    return dynamicCredentials.vps_auth_token.c_str();
-}
-
-const char* getVPSURL() {
-    return dynamicCredentials.vps_url.c_str();
 }
 
 const char* getDeviceID() {

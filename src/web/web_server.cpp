@@ -82,16 +82,8 @@ bool checkAuthentication(AsyncWebServerRequest* request) {
     IPAddress clientIP = request->client()->remoteIP();
     
     // ============== TRUSTED PROXY CHECK ==============
-    // VPS proxy requests must present a matching X-Proxy-Token header
+    // WireGuard cryptographically authenticates the VPS — IP check is sufficient
     if (isTrustedProxy(clientIP)) {
-        const char* storedToken = getVPSAuthToken();
-        bool tokenOk = storedToken && strlen(storedToken) > 0
-                       && request->hasHeader("X-Proxy-Token")
-                       && request->getHeader("X-Proxy-Token")->value() == storedToken;
-        if (!tokenOk) {
-            LOG_WARNING("Trusted proxy IP %s — X-Proxy-Token missing or invalid", clientIP.toString().c_str());
-            return false;
-        }
         return true;
     }
     

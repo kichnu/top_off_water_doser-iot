@@ -1,7 +1,6 @@
 #include "pump_controller.h"
 #include "../hardware/hardware_pins.h"
 #include "../config/config.h"
-#include "../network/vps_logger.h"
 #include "../hardware/rtc_controller.h"
 #include "../core/logging.h"
 #include <math.h>

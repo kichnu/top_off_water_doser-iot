@@ -10,7 +10,6 @@
 #include "hardware/water_sensors.h"
 #include "hardware/pump_controller.h"
 #include "network/wifi_manager.h"
-#include "network/vps_logger.h"
 #include "security/auth_manager.h"
 #include "security/session_manager.h"
 #include "security/rate_limiter.h"
