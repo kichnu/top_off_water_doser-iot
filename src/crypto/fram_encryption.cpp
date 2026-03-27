@@ -225,14 +225,14 @@ size_t removePKCS7Padding(const uint8_t* data, size_t data_len) {
 }
 
 bool encryptCredentials(const DeviceCredentials& creds, FRAMCredentials& fram_creds) {
-    LOG_INFO("Encrypting credentials with VPS URL support...");
-    
+    LOG_INFO("Encrypting credentials...");
+
     // Clear the structure
     memset(&fram_creds, 0, sizeof(FRAMCredentials));
-    
-    // Set magic and version - INCREMENT VERSION TO 3
+
+    // Set magic and version
     fram_creds.magic = FRAM_MAGIC_NUMBER;
-    fram_creds.version = 0x0003;  // 🆕 NEW VERSION
+    fram_creds.version = 0x0003;
     
     // Copy device name (plain text)
     strncpy(fram_creds.device_name, creds.device_name.c_str(), 31);
@@ -293,35 +293,19 @@ bool encryptCredentials(const DeviceCredentials& creds, FRAMCredentials& fram_cr
         return false;
     }
     
-    // Encrypt VPS token
-    ciphertext_len = 160;
-    if (!encryptData((const uint8_t*)creds.vps_token.c_str(), creds.vps_token.length(),
-                     encryption_key, fram_creds.iv,
-                     fram_creds.encrypted_vps_token, &ciphertext_len)) {
-        LOG_ERROR("Failed to encrypt VPS token");
-        return false;
-    }
-    
-    // 🆕 NEW: Encrypt VPS URL
-    ciphertext_len = 128;
-    if (!encryptData((const uint8_t*)creds.vps_url.c_str(), creds.vps_url.length(),
-                     encryption_key, fram_creds.iv,
-                     fram_creds.encrypted_vps_url, &ciphertext_len)) {
-        LOG_ERROR("Failed to encrypt VPS URL");
-        return false;
-    }
-    
+    // VPS token and URL fields are unused — leave zeroed (set by memset above)
+
     // Calculate checksum (only bytes before checksum field)
     size_t checksum_offset = offsetof(FRAMCredentials, checksum);
     uint16_t temp_checksum = calculateChecksum((uint8_t*)&fram_creds, checksum_offset);
     fram_creds.checksum = temp_checksum;
-    
-    LOG_INFO("SUCCESS: Credentials encrypted with VPS URL");
+
+    LOG_INFO("SUCCESS: Credentials encrypted");
     return true;
 }
      
 bool decryptCredentials(const FRAMCredentials& fram_creds, DeviceCredentials& creds) {
-    LOG_INFO("Decrypting credentials with VPS URL support...");
+    LOG_INFO("Decrypting credentials...");
     
     // Generate encryption key from device name
     uint8_t encryption_key[AES_KEY_SIZE];
@@ -372,31 +356,11 @@ bool decryptCredentials(const FRAMCredentials& fram_creds, DeviceCredentials& cr
         creds.admin_password = String((char*)plaintext_buffer);
     }
     
-    // Decrypt VPS token
-    plaintext_len = sizeof(plaintext_buffer);
-    if (!decryptData(fram_creds.encrypted_vps_token, 160,
-                     encryption_key, fram_creds.iv,
-                     plaintext_buffer, &plaintext_len)) {
-        LOG_ERROR("Failed to decrypt VPS token");
-        creds.vps_token = "";
-    } else {
-        plaintext_buffer[plaintext_len] = '\0';
-        creds.vps_token = String((char*)plaintext_buffer);
-    }
-    
-    // 🆕 NEW: Decrypt VPS URL
-    plaintext_len = sizeof(plaintext_buffer);
-    if (!decryptData(fram_creds.encrypted_vps_url, 128,
-                     encryption_key, fram_creds.iv,
-                     plaintext_buffer, &plaintext_len)) {
-        LOG_WARNING("Failed to decrypt VPS URL - may be old version without VPS URL");
-        creds.vps_url = ""; // Set empty for backward compatibility
-    } else {
-        plaintext_buffer[plaintext_len] = '\0';
-        creds.vps_url = String((char*)plaintext_buffer);
-    }
-    
-    LOG_INFO("SUCCESS: Credential decryption completed with VPS URL");
+    // VPS token and URL fields are unused — skip silently
+    creds.vps_token = "";
+    creds.vps_url = "";
+
+    LOG_INFO("SUCCESS: Credentials decrypted");
     return true;
 }
 
@@ -423,36 +387,12 @@ bool validateWiFiPassword(const String& password) {
     return (password.length() > 0 && password.length() <= MAX_WIFI_PASSWORD_LEN);
 }
 
-bool validateVPSToken(const String& token) {
-    return (token.length() > 0 && token.length() <= MAX_VPS_TOKEN_LEN);
-}
-
 uint16_t calculateChecksum(const uint8_t* data, size_t size) {
     uint16_t sum = 0;
     for (size_t i = 0; i < size; i++) {
         sum += data[i];
     }
     return sum;
-}
-
-// NEW FUNCTIONS 
-bool validateVPSURL(const String& url) {
-    if (url.length() == 0 || url.length() > 100) {
-        return false;
-    }
-    
-    // Basic URL validation - must start with http:// or https://
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        return false;
-    }
-    
-    // Check for basic URL structure
-    int slashCount = 0;
-    for (int i = 0; i < url.length(); i++) {
-        if (url.charAt(i) == '/') slashCount++;
-    }
-    
-    return slashCount >= 3; // http://domain/path requires at least 3 slashes
 }
 
 

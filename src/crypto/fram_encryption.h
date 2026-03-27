@@ -54,8 +54,6 @@ bool decryptCredentials(const FRAMCredentials& fram_creds, DeviceCredentials& cr
 bool validateDeviceName(const String& name);
 bool validateWiFiSSID(const String& ssid);
 bool validateWiFiPassword(const String& password);
-bool validateVPSToken(const String& token);
-bool validateVPSURL(const String& url);        // 🆕 NEW
 
 // Hash functions
 bool sha256Hash(const String& input, uint8_t* hash);
