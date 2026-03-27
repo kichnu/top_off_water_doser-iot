@@ -2,6 +2,10 @@
 
 #include "html_pages.h"
 
+// Long-press threshold for chart scroll buttons (ms).
+// Keep in sync with CHART_LONGPRESS_MS in the JS section of DASHBOARD_HTML below.
+#define CHART_LONGPRESS_MS 1000
+
 const char* LOGIN_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -550,7 +554,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         /* ===== THIRD CARD: Statistics ===== */
         .stats-columns {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 12px;
             align-items: start;
         }
@@ -937,56 +941,20 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
             <div class="stats-columns">
 
-                <!-- Column 1: Rolling 24h Refill Limit -->
+                <!-- Column 1: Kalkwasser Dosing Settings -->
                 <div class="stat-column">
-                    <h3>Rolling 24h Refill Limit</h3>
-                    <div class="stat-content">
-                        <div class="volume-indicator">
-                            <div class="volume-bar">
-                                <div class="volume-bar-fill" id="volumeBarFill"></div>
-                            </div>
-                            <div class="volume-text" id="volumeText">0 ml / 2000 ml</div>
-                        </div>
-                    </div>
+                    <h3>Kalkwasser Dosing - Current Value</h3>
                     <div class="input-group" style="margin-top: 8px;">
-                        <input type="number" id="dailyLimitInput" min="100" max="10000" step="100" placeholder="ml">
-                    </div>
-                    <div class="stat-daily">
-                        <button class="btn btn-secondary btn-small" onclick="setDailyLimit()">Set</button>
-                        <button class="btn btn-off btn-small" onclick="resetDailyVolume()" style="margin-left:6px;">Reset</button>
-                    </div>
-                </div>
-
-                <!-- Column 2: Kalkwasser Dosing Settings -->
-                <div class="stat-column">
-                    <h3>Kalkwasser Dosing</h3>
-                    <div class="stat-content">
-                        <div class="volume-indicator">
-                            <div class="volume-bar">
-                                <div class="volume-bar-fill" id="kalkDoseBarFill"></div>
-                            </div>
-                            <div class="volume-text" id="kalkDoseBarText">— ml / day</div>
-                        </div>
-                    </div>
-                    <div class="input-group" style="margin-top: 8px;">
-                        <input type="number" id="kalkDailyDose" min="1" max="500" step="1" placeholder="ml/day">
+                        <input type="number" id="kalkDailyDose" min="1" max="5000" step="1" placeholder="ml/day">
                     </div>
                     <div class="stat-daily">
                         <button class="btn btn-secondary btn-small" onclick="saveKalkConfig()">Save</button>
                     </div>
                 </div>
 
-                <!-- Column 3: Single Dose — ostatnia w HTML, pierwsza na desktopie (order:-1) -->
+                <!-- Column 2: Single Dose -->
                 <div class="stat-column stat-col-dose">
-                    <h3>Single Dose</h3>
-                    <div class="stat-content">
-                        <div class="volume-indicator">
-                            <div class="volume-bar">
-                                <div class="volume-bar-fill" id="doseBarFill"></div>
-                            </div>
-                            <div class="volume-text" id="doseText">— ml</div>
-                        </div>
-                    </div>
+                    <h3>Single Dose - Current Value</h3>
                     <div class="input-group" style="margin-top: 8px;">
                         <input type="number" id="doseInput" min="50" max="2000" step="10" placeholder="ml">
                     </div>
@@ -1000,31 +968,47 @@ const char* DASHBOARD_HTML = R"rawliteral(
             
         </div>
 
-        <!-- CYCLE HISTORY CARD -->
+        <!-- ATO & KALKWASSER PROCESS MONITOR CARD -->
         <div class="card">
             <div class="card-header">
-                <div class="card-header-icon" style="background: rgba(34, 211, 213, 0.15);">
-                    <svg fill="currentColor" style="color: #22d3d5;" viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+                <div class="card-header-icon" style="background: rgba(129, 140, 248, 0.15);">
+                    <svg fill="currentColor" style="color: #818cf8;" viewBox="0 0 24 24"><path d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.28L13 17v5c5.05-.56 9-4.78 9-9.93 0-5.45-4.22-9.92-9-10.02zm-2 0C5.95 2.61 2 6.83 2 12c0 4.64 3.17 8.6 7.2 9.86v-2.09c-2.89-1.14-4.96-3.87-4.96-7.05 0-3.25 2-6 4.76-7.72V2.05z"/></svg>
                 </div>
-                <h2>Evaporation rate (ml/h)</h2>
+                <h2>ATO &amp; Kalkwasser Process Monitor</h2>
             </div>
-            <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
                 <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="flex:1;">Load History</button>
                 <button class="btn btn-secondary" onclick="deleteCycleHistory()" id="deleteCyclesBtn" style="flex:1;color:#f87171;border-color:rgba(248,113,113,0.3);">Delete Data</button>
             </div>
+            <div style="background:var(--bg-input);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px;">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+                    <span style="font-size:0.72rem;font-weight:600;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">Rolling 24h Refill</span>
+                    <span id="volumeText" style="font-size:0.8rem;color:var(--text-secondary);">0 ml / 2000 ml</span>
+                </div>
+                <div class="volume-bar"><div class="volume-bar-fill" id="volumeBarFill"></div></div>
+                <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+                    <input type="number" id="dailyLimitInput" min="100" max="10000" step="100" placeholder="limit ml" style="flex:1;min-width:0;">
+                    <button class="btn btn-secondary btn-small" onclick="setDailyLimit()">Set</button>
+                    <button class="btn btn-off btn-small" onclick="resetDailyVolume()">Reset</button>
+                </div>
+            </div>
             <div class="chart-wrap">
+                <div style="font-size:0.7rem;font-weight:600;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:5px;padding-left:2px;">Evaporation Rate (ml/h)</div>
                 <div id="chartRateScroll" class="chart-rate-scroll">
                     <canvas id="chartRate"></canvas>
                 </div>
                 <div class="chart-scroll-btns">
-                    <button class="chart-scroll-btn" onclick="scrollRateChart(-1)">&#9664;</button>
-                    <button class="chart-scroll-btn" onclick="scrollRateChart(1)">&#9654;</button>
+                    <button class="chart-scroll-btn" id="chartScrollLeft">&#9664;</button>
+                    <button class="chart-scroll-btn" id="chartScrollRight">&#9654;</button>
                 </div>
                 <div class="chart-legend">
                     <span><span style="background:#4ade8022;border:1px solid #4ade8055;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Normal</span>
                     <span><span style="background:#fbbf2422;border:1px solid #fbbf2455;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Warning</span>
                     <span><span style="background:#f8717122;border:1px solid #f8717155;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Alarm</span>
                     <span><span style="color:#94a3b8;font-weight:bold;">&#8212;</span> EMA</span>
+                    <span id="legendEmaRate" style="color:var(--text-secondary);border-left:1px solid var(--border);padding-left:10px;display:none;"></span>
+                    <span id="legendWarnBand" style="color:#fbbf24;display:none;"></span>
+                    <span id="legendAlarmBand" style="color:#f87171;display:none;"></span>
                 </div>
             </div>
         </div>
@@ -1630,11 +1614,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     document.getElementById("volumeBarFill").style.width = pctUsed + "%";
                     document.getElementById("volumeText").textContent = rolling + " ml / " + limit + " ml";
 
-                    // Single Dose bar (dose jako % max 2000 ml)
-                    const pctDose = Math.min((dose / 2000) * 100, 100);
-                    document.getElementById("doseBarFill").style.width = pctDose + "%";
-                    document.getElementById("doseText").textContent = dose + " ml / cycle";
-
                     // Populate inputs with current saved values (skip if user is editing)
                     const limitInp = document.getElementById("dailyLimitInput");
                     if (document.activeElement !== limitInp) limitInp.value = limit;
@@ -1857,26 +1836,18 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 ctx.fillStyle=CC.bandG;
                 ctx.fillRect(p.l, yYt,  cw, yYb-yYt);
 
-                ctx.font='bold 10px sans-serif'; ctx.textAlign='left';
-                function drawBoundLabel(yPos, val) {
-                    if (yPos < p.t || yPos > p.t+ch) return;
-                    ctx.fillStyle='#94a3b8';
-                    ctx.fillText(fmtV(val), p.l+4, yPos+3);
-                }
-                drawBoundLabel(yRt, ema.ema_rate+rD);
-                drawBoundLabel(yRb, Math.max(0, ema.ema_rate-rD));
-                drawBoundLabel(yYt, ema.ema_rate+yD);
-                drawBoundLabel(yYb, Math.max(0, ema.ema_rate-yD));
+                // Update legend with EMA values
+                var elER = document.getElementById('legendEmaRate');
+                var elWB = document.getElementById('legendWarnBand');
+                var elAB = document.getElementById('legendAlarmBand');
+                if (elER) { elER.textContent = 'EMA ' + fmtV(ema.ema_rate) + ' ml/h'; elER.style.display = ''; }
+                if (elWB) { elWB.textContent = '± ' + fmtV(yD) + ' warn'; elWB.style.display = ''; }
+                if (elAB) { elAB.textContent = '± ' + fmtV(rD) + ' alarm'; elAB.style.display = ''; }
 
                 var ye = yOf(ema.ema_rate);
-                var emaLbl = 'EMA ' + fmtV(ema.ema_rate);
-                ctx.font='bold 10px sans-serif';
-                var lblW = ctx.measureText(emaLbl).width + 6;
                 ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
-                ctx.beginPath(); ctx.moveTo(p.l+lblW, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(p.l, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.fillStyle='#94a3b8'; ctx.textAlign='left';
-                ctx.fillText(emaLbl, p.l+4, ye+3);
             }
 
             // Data line
@@ -1912,6 +1883,58 @@ const char* DASHBOARD_HTML = R"rawliteral(
             if (!el) return;
             el.scrollTo({ left: el.scrollLeft + dir * el.offsetWidth * 0.5, behavior: 'smooth' });
         }
+
+        function scrollRateChartEdge(dir) {
+            var el = document.getElementById('chartRateScroll');
+            if (!el) return;
+            el.scrollTo({ left: dir > 0 ? el.scrollWidth : 0, behavior: 'smooth' });
+        }
+
+        // Long-press threshold — keep in sync with #define CHART_LONGPRESS_MS in html_pages.cpp
+        var CHART_LONGPRESS_MS = 1000;
+
+        (function() {
+            function setupScrollBtn(id, dir) {
+                var btn = document.getElementById(id);
+                if (!btn) return;
+                var timer = null;
+                var active = false;
+
+                function onStart(e) {
+                    active = true;
+                    timer = setTimeout(function() {
+                        timer = null;
+                        if (active) scrollRateChartEdge(dir);
+                    }, CHART_LONGPRESS_MS);
+                }
+
+                function onEnd(e) {
+                    if (!active) return;
+                    active = false;
+                    if (timer !== null) {
+                        clearTimeout(timer);
+                        timer = null;
+                        scrollRateChart(dir);
+                    }
+                }
+
+                function onCancel() {
+                    active = false;
+                    if (timer !== null) { clearTimeout(timer); timer = null; }
+                }
+
+                btn.addEventListener('mousedown', onStart);
+                btn.addEventListener('mouseup', onEnd);
+                btn.addEventListener('mouseleave', onCancel);
+                btn.addEventListener('touchstart', function(e) { e.preventDefault(); onStart(e); }, { passive: false });
+                btn.addEventListener('touchend',   function(e) { e.preventDefault(); onEnd(e);   }, { passive: false });
+                btn.addEventListener('touchcancel', onCancel);
+            }
+
+            setupScrollBtn('chartScrollLeft',  -1);
+            setupScrollBtn('chartScrollRight',  1);
+        })();
+
 
         function deleteCycleHistory() {
             if (!confirm("Delete all cycle history and EMA data?\nThis cannot be undone.")) return;
@@ -2070,7 +2093,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
         }
 
         function saveKalkConfig() {
-            var dose = parseInt(document.getElementById('kalkDailyDose').value) || 0;
+            var dose = parseInt(document.getElementById('kalkDailyDose').value);
+            if (isNaN(dose) || dose < 1 || dose > 5000) return;
+            if (!confirm("Set Kalkwasser daily dose to " + dose + " ml?")) return;
             secureFetch('api/kalkwasser-config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -2078,12 +2103,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
             })
             .then(function(r) { return r ? r.json() : null; })
             .then(function(data) {
-                if (data && data.success) {
-                    var bar = document.getElementById('kalkDoseBarFill');
-                    var txt = document.getElementById('kalkDoseBarText');
-                    if (bar) bar.style.width = Math.min((dose / 500) * 100, 100) + '%';
-                    if (txt) txt.textContent = dose > 0 ? dose + ' ml / day' : 'not configured';
-                }
             });
         }
 
@@ -2100,11 +2119,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     if (fr > 0) {
                         document.getElementById('kalkMeasuredMl').placeholder = (fr / 1000 * 30).toFixed(1);
                     }
-                    // Aktualizuj pasek w 3. karcie
-                    var bar = document.getElementById('kalkDoseBarFill');
-                    var txt = document.getElementById('kalkDoseBarText');
-                    if (bar) bar.style.width = Math.min((dose / 500) * 100, 100) + '%';
-                    if (txt) txt.textContent = dose > 0 ? dose + ' ml / day' : 'not configured';
                 });
         }
 

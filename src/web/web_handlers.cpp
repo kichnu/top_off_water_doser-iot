@@ -736,8 +736,8 @@ void handleKalkwasserConfig(AsyncWebServerRequest* request) {
             en = request->getParam("enabled", true)->value().toInt() != 0;
         if (request->hasParam("daily_dose_ml", true))
             dose_ml = (uint16_t)request->getParam("daily_dose_ml", true)->value().toInt();
-        if (dose_ml > 500) {
-            request->send(400, "application/json", "{\"success\":false,\"error\":\"dose_ml max 500\"}");
+        if (dose_ml > 5000) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"dose_ml max 5000\"}");
             return;
         }
         kalkwasserScheduler.setConfig(en, dose_ml);
