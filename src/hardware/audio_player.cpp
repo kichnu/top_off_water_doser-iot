@@ -9,6 +9,7 @@ void AudioPlayer::init() {
     initialized  = false;
     currentTrack = 0;
     lastPlayMs   = 0;
+    muted        = false;
 
     Serial1.begin(115200, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
 
@@ -55,7 +56,18 @@ void AudioPlayer::update() {
         desired = AUDIO_TRACK_WARN_LOW_RESERVOIR;           // plik 5
     }
 
+    // Brak alarmu: zatrzymaj, wyczyść mute (reset dla następnego alarmu)
     if (desired == 0) {
+        if (currentTrack != 0) {
+            df.pause();
+            currentTrack = 0;
+        }
+        muted = false;
+        return;
+    }
+
+    // Alarm wyciszony: zatrzymaj jeśli coś gra i nie startuj
+    if (muted) {
         if (currentTrack != 0) {
             df.pause();
             currentTrack = 0;
@@ -69,9 +81,25 @@ void AudioPlayer::update() {
         return;
     }
 
-    // Ten sam alarm: powtórz po AUDIO_REPEAT_INTERVAL_MS gdy plik się skończył
-    if (!df.isPlaying() && (millis() - lastPlayMs >= AUDIO_REPEAT_INTERVAL_MS)) {
+    // Ten sam alarm: powtórz po indywidualnym interwale gdy plik się skończył
+    if (!df.isPlaying() && (millis() - lastPlayMs >= repeatIntervalMs(currentTrack))) {
         playTrack(currentTrack);
+    }
+}
+
+void AudioPlayer::setMuted(bool mute) {
+    muted = mute;
+    LOG_INFO("AudioPlayer: alarm %s", mute ? "MUTED" : "UNMUTED");
+}
+
+uint32_t AudioPlayer::repeatIntervalMs(uint8_t track) const {
+    switch (track) {
+        case 1: return AUDIO_REPEAT_DAILY_LIMIT_MS;
+        case 2: return AUDIO_REPEAT_RED_ALERT_MS;
+        case 3: return AUDIO_REPEAT_BOTH_ERRORS_MS;
+        case 4: return AUDIO_REPEAT_LOW_RESERVOIR_CRIT_MS;
+        case 5: return AUDIO_REPEAT_LOW_RESERVOIR_WARN_MS;
+        default: return 60000;
     }
 }
 

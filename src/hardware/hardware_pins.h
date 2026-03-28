@@ -9,7 +9,7 @@
 //                               GPIO  2  ──┤                ├── 5V
 //       MIXING_PUMP_RELAY_PIN   GPIO  3  ──┤                ├── GND
 //          ATO_PUMP_RELAY_PIN   GPIO  4  ──┤                ├── 3.3V
-//                   RESET_PIN   GPIO  5  ──┤                ├── GPIO 10  
+//                   RESET_PIN   GPIO  5  ──┤                ├── GPIO 10  PERYSTALTIC_PUMP
 //                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  DFPLAYER_TX_PIN (UART TX) 
 //                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8  DFPLAYER_RX_PIN (UART RX)
 //  AVAILABLE_WATER_SENSOR_PIN   GPIO 21  ──┤                ├── GPIO 20  WATER_SENSOR_PIN 
@@ -37,8 +37,8 @@
 #define RESET_PIN 5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
 
 // ============== DFPLAYER PRO (Fermion DFR0768) — UART1 ==============
-#define DFPLAYER_TX_PIN 9   // ESP32 TX → DFPlayer RX  (był ERROR_SIGNAL_PIN)
-#define DFPLAYER_RX_PIN 8   // DFPlayer TX → ESP32 RX  (był wolny)
+#define DFPLAYER_TX_PIN 8   // ESP32 TX → DFPlayer RX  (był ERROR_SIGNAL_PIN)
+#define DFPLAYER_RX_PIN 9   // DFPlayer TX → ESP32 RX  (był wolny)
 
 // ============== WOLNE (rezerwa) ==============
 // GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)

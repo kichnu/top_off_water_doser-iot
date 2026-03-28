@@ -61,6 +61,9 @@ void handlePeristalticPumpDirect(AsyncWebServerRequest* request);
 // System reset (works from any state except LOGGING)
 void handleSystemReset(AsyncWebServerRequest *request);
 
+// Alarm audio mute toggle
+void handleAlarmToggle(AsyncWebServerRequest *request);
+
 // Health check endpoint (no session required)
 void handleHealth(AsyncWebServerRequest *request);
 

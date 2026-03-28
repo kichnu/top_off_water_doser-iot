@@ -18,6 +18,7 @@
 #include "../algorithm/kalkwasser_scheduler.h"
 #include "../hardware/peristaltic_pump.h"
 #include "../hardware/mixing_pump.h"
+#include "../hardware/audio_player.h"
 
 void handleDashboard(AsyncWebServerRequest* request) {
     if (!checkAuthentication(request)) {
@@ -181,6 +182,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     json["kalk_mix_done_bits"]      = kalkwasserScheduler.getMixDoneBits();
     json["kalk_dose_done_bits"]     = kalkwasserScheduler.getDoseDoneBits();
     json["kalk_alarm"]              = kalkwasserScheduler.isNoTopoffAlarm();
+    json["audio_muted"]             = audioPlayer.isMuted();
     json["mixing_pump_active"]      = isMixingPumpActive();
     json["peristaltic_pump_active"] = isPeristalticPumpRunning();
     json["rtc_ts"]            = (uint32_t)getUnixTimestamp();
@@ -900,4 +902,39 @@ void handleHealth(AsyncWebServerRequest *request) {
     json += "}";
 
     request->send(200, "application/json", json);
+}
+
+// ===============================
+// ALARM AUDIO MUTE TOGGLE
+// GET  → zwraca stan wyciszenia
+// POST → przełącza mute (toggle)
+// ===============================
+
+void handleAlarmToggle(AsyncWebServerRequest *request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+
+    if (request->method() == HTTP_GET) {
+        JsonDocument json;
+        json["success"] = true;
+        json["muted"]   = audioPlayer.isMuted();
+        String response;
+        serializeJson(json, response);
+        request->send(200, "application/json", response);
+
+    } else if (request->method() == HTTP_POST) {
+        bool newMuted = !audioPlayer.isMuted();
+        audioPlayer.setMuted(newMuted);
+
+        JsonDocument json;
+        json["success"] = true;
+        json["muted"]   = newMuted;
+        String response;
+        serializeJson(json, response);
+        request->send(200, "application/json", response);
+
+        LOG_INFO("Alarm audio %s via web interface", newMuted ? "MUTED" : "UNMUTED");
+    }
 }

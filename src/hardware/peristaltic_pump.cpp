@@ -52,8 +52,8 @@ void startPeristalticPump(uint32_t durationSeconds, uint32_t stepsPerSec) {
     currentSps = stepsPerSec;
     durationMs = durationSeconds * 1000UL;
 
-    // Przestaw częstotliwość LEDC na żądaną prędkość
-    ledcAttach(PERYSTALTIC_PUMP_DRIVER_PIN, stepsPerSec, PERISTALTIC_LEDC_RESOLUTION);
+    // Zmień częstotliwość LEDC na żądaną prędkość (pin już podpięty przez initPeristalticPump)
+    ledcChangeFrequency(PERYSTALTIC_PUMP_DRIVER_PIN, stepsPerSec, PERISTALTIC_LEDC_RESOLUTION);
     ledcWrite(PERYSTALTIC_PUMP_DRIVER_PIN, PERISTALTIC_LEDC_DUTY_50);
 
     pumpRunning = true;

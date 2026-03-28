@@ -464,7 +464,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         /* ===== SECOND CARD: Pump Control ===== */
         .pump-controls {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 12px;
         }
         @media (max-width: 480px) {
@@ -921,6 +921,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             <div class="pump-controls">
                 <button id="systemToggleBtn" class="btn btn-primary" onclick="toggleSystem()">System On</button>
                 <button id="kalkwasserBtn" class="btn btn-kalk-off" onclick="toggleKalkwasser()">Kalkwasser OFF</button>
+                <button id="alarmBtn" class="btn btn-kalk-on" onclick="toggleAlarm()">Alarm ON</button>
                 <button id="manualPumpBtn" class="btn btn-off">Manual Pump OFF</button>
                 <button id="mixingPumpBtn" class="btn btn-off" onclick="toggleMixingPump()">Mixing Pump OFF</button>
                 <button id="peristalticPumpBtn" class="btn btn-off" onclick="togglePeristalticPump()">Peristaltic OFF</button>
@@ -1196,6 +1197,41 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     }
                 })
                 .catch((error) => console.error("Failed to load system state:", error));
+        }
+
+        // ============================================
+        // ALARM AUDIO TOGGLE (bistable ON/OFF)
+        // ============================================
+        function toggleAlarm() {
+            const btn = document.getElementById("alarmBtn");
+            btn.disabled = true;
+
+            secureFetch("api/alarm-toggle", { method: "POST" })
+                .then((response) => {
+                    if (!response) { btn.disabled = false; return; }
+                    return response.json();
+                })
+                .then((data) => {
+                    if (!data) return;
+                    if (data.success) updateAlarmButton(data.muted);
+                    btn.disabled = false;
+                })
+                .catch((error) => {
+                    console.error("Toggle alarm error:", error);
+                    btn.disabled = false;
+                });
+        }
+
+        function updateAlarmButton(muted) {
+            const btn = document.getElementById("alarmBtn");
+            if (!btn) return;
+            if (muted) {
+                btn.textContent = "Alarm OFF";
+                btn.className = "btn btn-kalk-off";
+            } else {
+                btn.textContent = "Alarm ON";
+                btn.className = "btn btn-kalk-on";
+            }
         }
 
         // ============================================
@@ -1539,6 +1575,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     updatePumpButton(data.pump_active);
                     updateMixingPumpButton(data.mixing_pump_active || false);
                     updatePeristalticPumpButton(data.peristaltic_pump_active || false);
+                    if (typeof data.audio_muted !== 'undefined') updateAlarmButton(data.audio_muted);
 
                     // WiFi status
                     const wifiItem = document.getElementById("wifiItem");
@@ -1848,6 +1885,14 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
                 ctx.beginPath(); ctx.moveTo(p.l, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
                 ctx.setLineDash([]);
+            } else {
+                // Brak dojrzałej EMA — ukryj legendę żeby nie pokazywała starych wartości
+                var elER = document.getElementById('legendEmaRate');
+                var elWB = document.getElementById('legendWarnBand');
+                var elAB = document.getElementById('legendAlarmBand');
+                if (elER) elER.style.display = 'none';
+                if (elWB) elWB.style.display = 'none';
+                if (elAB) elAB.style.display = 'none';
             }
 
             // Data line

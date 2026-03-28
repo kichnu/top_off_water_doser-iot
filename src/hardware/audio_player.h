@@ -21,7 +21,14 @@
 // ============================================================
 
 #define AUDIO_VOLUME               15    // Głośność 0–30
-#define AUDIO_REPEAT_INTERVAL_MS 5000    // Przerwa między powtórzeniami [ms]
+
+// Przerwy między powtórzeniami per komunikat [ms]
+// Pierwsze odtworzenie zawsze natychmiastowe (przy zmianie alarmu/warning).
+#define AUDIO_REPEAT_DAILY_LIMIT_MS        60000   // 001 — dzienny limit osiągnięty
+#define AUDIO_REPEAT_RED_ALERT_MS          60000   // 002 — anomalia szybkości
+#define AUDIO_REPEAT_BOTH_ERRORS_MS        60000   // 003 — limit + anomalia
+#define AUDIO_REPEAT_LOW_RESERVOIR_CRIT_MS 60000   // 004 — krytycznie niski poziom
+#define AUDIO_REPEAT_LOW_RESERVOIR_WARN_MS 120000  // 005 — ostrzeżenie niski poziom
 
 #define AUDIO_TRACK_WARN_LOW_RESERVOIR  5   // numer pliku dla ostrzeżenia
 #define AUDIO_TRACK_PROVISIONING        6   // numer pliku dla trybu provisioning
@@ -32,6 +39,12 @@ public:
     void update();  // Wywołaj z loop() co ~100 ms
     void stop();    // Zatrzymaj odtwarzanie
 
+    // Wyciszenie alarmu głosowego — zatrzymuje bieżące odtwarzanie i blokuje nowe.
+    // Mute reset automatycznie gdy wszystkie alarmy ustąpią (desired==0),
+    // dzięki czemu kolejny alarm zawsze odtworzy się natychmiastowo.
+    void setMuted(bool mute);
+    bool isMuted() const { return muted; }
+
     bool isInitialized() const { return initialized; }
 
 private:
@@ -39,8 +52,10 @@ private:
     uint32_t lastPlayMs;
     uint8_t  currentTrack;   // 0 = nic nie gra
     bool     initialized;
+    bool     muted;          // true = alarm wyciszony przez użytkownika
 
     void playTrack(uint8_t track);
+    uint32_t repeatIntervalMs(uint8_t track) const;
 };
 
 extern AudioPlayer audioPlayer;
