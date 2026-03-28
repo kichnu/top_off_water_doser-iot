@@ -854,7 +854,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     <div class="status-main-sub">
                         <span id="sensor1Badge" class="sub-off">Sensors: OFF</span>
                         <span class="sub-sep">•</span>
-                        <span id="pumpBadge" class="sub-off">Pump: IDLE</span>
+                        <span id="pumpBadge" class="sub-off">Pump: OFF</span>
+                        <span class="sub-sep">•</span>
+                        <span id="kalkPumpBadge" class="sub-off">Kalk Pump: OFF</span>
+                        <span class="sub-sep">•</span>
+                        <span id="mixingPumpBadge" class="sub-off">Mix Pump: OFF</span>
                         <span class="sub-sep" id="reservoirSep" style="display:none">•</span>
                         <span id="reservoirAlarmBadge" style="display:none"></span>
                     </div>
@@ -1490,11 +1494,25 @@ const char* DASHBOARD_HTML = R"rawliteral(
             const el = document.getElementById(badgeId);
             if (!el) return;
             if (!isActive) {
-                el.textContent = 'Pump: IDLE'; el.className = 'sub-off';
+                el.textContent = 'Pump: OFF'; el.className = 'sub-off';
             } else {
-                el.textContent = 'Pump: ACTIVE';
+                el.textContent = 'Pump: ON';
                 el.className = attempt >= 3 ? 'sub-danger' : attempt === 2 ? 'sub-warn' : 'sub-on';
             }
+        }
+
+        function updateKalkPumpBadge(isActive) {
+            const el = document.getElementById('kalkPumpBadge');
+            if (!el) return;
+            el.textContent = 'Kalk Pump: ' + (isActive ? 'ON' : 'OFF');
+            el.className = isActive ? 'sub-on' : 'sub-off';
+        }
+
+        function updateMixingPumpBadge(isActive) {
+            const el = document.getElementById('mixingPumpBadge');
+            if (!el) return;
+            el.textContent = 'Mix Pump: ' + (isActive ? 'ON' : 'OFF');
+            el.className = isActive ? 'sub-on' : 'sub-off';
         }
 
         function updateSystemBadge(badgeId, hasError, isDisabled, hasWarning) {
@@ -1560,6 +1578,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     updateSensorBadge("sensor1Badge", data.sensor_active);
                     updateSensorBadge("sensor2Badge", data.sensor_active);
                     updatePumpBadge("pumpBadge", data.pump_active, data.pump_attempt || 0);
+                    updateKalkPumpBadge(data.peristaltic_pump_active || false);
+                    updateMixingPumpBadge(data.mixing_pump_active || false);
                     updateSystemBadge("systemBadge", data.system_error, data.system_disabled, hasLowResWarning);
 
                     // Process status
