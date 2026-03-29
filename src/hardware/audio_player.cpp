@@ -1,40 +1,49 @@
 #include "audio_player.h"
 #include "hardware_pins.h"
+#include "fram_controller.h"
 #include "../algorithm/water_algorithm.h"
 #include "../core/logging.h"
 
 AudioPlayer audioPlayer;
+
+void AudioPlayer::setVolume(uint8_t vol) {
+    vol = (vol < AUDIO_VOLUME_MIN) ? AUDIO_VOLUME_MIN
+        : (vol > AUDIO_VOLUME_MAX) ? AUDIO_VOLUME_MAX : vol;
+    volume = vol;
+    if (initialized) df.setVol(volume);
+    saveAudioConfigToFRAM(volume);
+}
 
 void AudioPlayer::init() {
     initialized  = false;
     currentTrack = 0;
     lastPlayMs   = 0;
     muted        = false;
+    volume       = AUDIO_VOLUME_DEFAULT;
 
-    Serial1.begin(115200, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
-
-    for (int attempt = 1; attempt <= 3; attempt++) {
-        if (df.begin(Serial1)) {
-            initialized = true;
-            break;
-        }
-        LOG_WARNING("AudioPlayer: init attempt %d/3 failed", attempt);
-        delay(1000);
+    // Wczytaj zapisaną głośność z FRAM (jeśli dostępna)
+    uint8_t savedVol;
+    if (loadAudioConfigFromFRAM(savedVol)) {
+        volume = savedVol;
+        LOG_INFO("AudioPlayer: volume loaded from FRAM: %d", volume);
     }
 
-    if (!initialized) {
-        LOG_WARNING("AudioPlayer: DFPlayer Pro not found — audio disabled");
-        return;
-    }
+    // TX-only: GPIO20 (UART0 RX) blokuje UART1 RX przez periman — df.begin() timeout.
+    // Komendy wysyłamy przez TX (GPIO8), odpowiedzi nie odbieramy.
+    Serial1.begin(115200, SERIAL_8N1, -1, DFPLAYER_TX_PIN);
 
-    df.setVol(AUDIO_VOLUME);
+    // begin() zwróci false (brak ACK z RX), ale stream jest ustawiony — komendy działają
+    df.begin(Serial1);
+    initialized = true;
+
+    df.setVol(volume);
     df.switchFunction(df.MUSIC);
     delay(2000);                  // odczekaj na dźwięk startowy
-    df.setPlayMode(df.SINGLE);    // odtwórz jeden raz, zatrzymaj — powtórzenia obsługuje update()
-    df.setPrompt(false);          // wyłącz dźwięk startowy (zapisane w flash)
+    df.setPlayMode(df.SINGLE);
+    df.setPrompt(false);
     df.setLED(false);
 
-    LOG_INFO("AudioPlayer: OK (vol=%d, GPIO TX=%d RX=%d)", AUDIO_VOLUME, DFPLAYER_TX_PIN, DFPLAYER_RX_PIN);
+    LOG_INFO("AudioPlayer: OK TX-only (vol=%d, GPIO TX=%d)", AUDIO_VOLUME, DFPLAYER_TX_PIN);
 }
 
 void AudioPlayer::playTrack(uint8_t track) {
@@ -81,8 +90,8 @@ void AudioPlayer::update() {
         return;
     }
 
-    // Ten sam alarm: powtórz po indywidualnym interwale gdy plik się skończył
-    if (!df.isPlaying() && (millis() - lastPlayMs >= repeatIntervalMs(currentTrack))) {
+    // TX-only: bez isPlaying() — powtarzaj po upływie repeat interval
+    if (millis() - lastPlayMs >= repeatIntervalMs(currentTrack)) {
         playTrack(currentTrack);
     }
 }

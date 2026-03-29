@@ -24,7 +24,7 @@ bool checkProvisioningButton() {
 
     // Init DFPlayer Pro and play provisioning track (starts ~0.5-1s after pressStart)
     DFRobot_DF1201S df;
-    Serial1.begin(115200, SERIAL_8N1, DFPLAYER_RX_PIN, DFPLAYER_TX_PIN);
+    Serial1.begin(115200, SERIAL_8N1, -1, DFPLAYER_TX_PIN);  // TX-only, brak RX (GPIO20 conflict)
     if (df.begin(Serial1)) {
         df.setVol(AUDIO_VOLUME);
         df.switchFunction(df.MUSIC);

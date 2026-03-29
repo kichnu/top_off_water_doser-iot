@@ -183,6 +183,7 @@ void handleStatus(AsyncWebServerRequest* request) {
     json["kalk_dose_done_bits"]     = kalkwasserScheduler.getDoseDoneBits();
     json["kalk_alarm"]              = kalkwasserScheduler.isNoTopoffAlarm();
     json["audio_muted"]             = audioPlayer.isMuted();
+    json["audio_volume"]            = audioPlayer.getVolume();
     json["mixing_pump_active"]      = isMixingPumpActive();
     json["peristaltic_pump_active"] = isPeristalticPumpRunning();
     json["rtc_ts"]            = (uint32_t)getUnixTimestamp();
@@ -909,6 +910,43 @@ void handleHealth(AsyncWebServerRequest *request) {
 // GET  → zwraca stan wyciszenia
 // POST → przełącza mute (toggle)
 // ===============================
+
+void handleAudioVolume(AsyncWebServerRequest *request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+
+    if (request->method() == HTTP_GET) {
+        JsonDocument json;
+        json["success"] = true;
+        json["volume"]  = audioPlayer.getVolume();
+        String response;
+        serializeJson(json, response);
+        request->send(200, "application/json", response);
+
+    } else if (request->method() == HTTP_POST) {
+        if (!request->hasParam("volume", true)) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Missing volume\"}");
+            return;
+        }
+        int v = request->getParam("volume", true)->value().toInt();
+        if (v < AUDIO_VOLUME_MIN || v > AUDIO_VOLUME_MAX || v % 5 != 0) {
+            request->send(400, "application/json", "{\"success\":false,\"error\":\"Volume must be 5/10/15/20/25/30\"}");
+            return;
+        }
+        audioPlayer.setVolume((uint8_t)v);
+
+        JsonDocument json;
+        json["success"] = true;
+        json["volume"]  = audioPlayer.getVolume();
+        String response;
+        serializeJson(json, response);
+        request->send(200, "application/json", response);
+
+        LOG_INFO("Audio volume set to %d via web interface", audioPlayer.getVolume());
+    }
+}
 
 void handleAlarmToggle(AsyncWebServerRequest *request) {
     if (!checkAuthentication(request)) {

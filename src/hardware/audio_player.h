@@ -45,7 +45,9 @@ public:
     void setMuted(bool mute);
     bool isMuted() const { return muted; }
 
-    bool isInitialized() const { return initialized; }
+    bool    isInitialized() const { return initialized; }
+    uint8_t getVolume()     const { return volume; }
+    void    setVolume(uint8_t vol);
 
 private:
     DFRobot_DF1201S df;
@@ -53,6 +55,7 @@ private:
     uint8_t  currentTrack;   // 0 = nic nie gra
     bool     initialized;
     bool     muted;          // true = alarm wyciszony przez użytkownika
+    uint8_t  volume;         // głośność alarmu 3–30 (persystowana w FRAM)
 
     void playTrack(uint8_t track);
     uint32_t repeatIntervalMs(uint8_t track) const;

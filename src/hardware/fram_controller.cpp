@@ -1086,3 +1086,36 @@ bool loadKalkwasserConfigFromFRAM(KalkwasserConfig& cfg) {
     cfg = tmp;
     return true;
 }
+
+// ===============================
+// AUDIO CONFIG
+// ===============================
+
+bool saveAudioConfigToFRAM(uint8_t volume) {
+    if (!framInitialized) return false;
+    AudioConfig cfg;
+    cfg.volume  = volume;
+    cfg.magic   = AUDIO_CONFIG_MAGIC;
+    cfg._pad[0] = 0;
+    cfg._pad[1] = 0;
+    fram.write(FRAM_ADDR_AUDIO_CFG, (uint8_t*)&cfg, sizeof(AudioConfig));
+    uint16_t chksum = calculateChecksum((uint8_t*)&cfg, sizeof(AudioConfig));
+    fram.write(FRAM_ADDR_AUDIO_CHKSUM, (uint8_t*)&chksum, 2);
+    LOG_INFO("AudioConfig saved: volume=%d", volume);
+    return true;
+}
+
+bool loadAudioConfigFromFRAM(uint8_t& volume) {
+    if (!framInitialized) return false;
+    AudioConfig tmp;
+    fram.read(FRAM_ADDR_AUDIO_CFG, (uint8_t*)&tmp, sizeof(AudioConfig));
+    uint16_t stored = 0;
+    fram.read(FRAM_ADDR_AUDIO_CHKSUM, (uint8_t*)&stored, 2);
+    uint16_t calc = calculateChecksum((uint8_t*)&tmp, sizeof(AudioConfig));
+    if (calc != stored || tmp.magic != AUDIO_CONFIG_MAGIC) {
+        LOG_WARNING("AudioConfig checksum/magic mismatch — using default volume %d", AUDIO_VOLUME_DEFAULT);
+        return false;
+    }
+    volume = tmp.volume;
+    return true;
+}

@@ -205,6 +205,27 @@ bool saveKalkwasserConfigToFRAM(const KalkwasserConfig& cfg);
 bool loadKalkwasserConfigFromFRAM(KalkwasserConfig& cfg);
 
 // ===============================
+// AUDIO CONFIG (volume persistence)
+// 0x0AD6–0x0AD9: 4 bytes struct, 0x0ADA–0x0ADB: 2 bytes checksum
+// ===============================
+#define FRAM_ADDR_AUDIO_CFG    0x0AD6
+#define FRAM_ADDR_AUDIO_CHKSUM 0x0ADA
+#define AUDIO_CONFIG_MAGIC     0xA8
+#define AUDIO_VOLUME_DEFAULT   20   // poziom 3 z 5 (głośność 20/30)
+#define AUDIO_VOLUME_MIN        5   // poziom 0 (min)
+#define AUDIO_VOLUME_MAX       30   // poziom 5 (max)
+
+struct AudioConfig {
+    uint8_t volume;   // 3–30
+    uint8_t magic;    // AUDIO_CONFIG_MAGIC
+    uint8_t _pad[2];
+};
+static_assert(sizeof(AudioConfig) == 4, "AudioConfig must be 4 bytes");
+
+bool saveAudioConfigToFRAM(uint8_t volume);
+bool loadAudioConfigFromFRAM(uint8_t& volume);
+
+// ===============================
 // FRAM CREDENTIALS SECTION
 // (Used by programming mode)
 // ===============================

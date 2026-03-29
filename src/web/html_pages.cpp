@@ -510,7 +510,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
         .btn-primary {
             background: rgba(34, 197, 94, 0.15);
-            border: 1px solid rgba(34, 197, 94, 0.3);
             color: var(--accent-green);
         }
 
@@ -522,7 +521,6 @@ const char* DASHBOARD_HTML = R"rawliteral(
         /* Stan OFF dla przycisków bistabilnych */
         .btn-off {
             background: var(--bg-input);
-            border: 1px solid rgba(34, 197, 94, 0.3);
             color: var(--text-secondary);
         }
 
@@ -930,6 +928,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <button id="mixingPumpBtn" class="btn btn-off" onclick="toggleMixingPump()">Mixing Pump OFF</button>
                 <button id="peristalticPumpBtn" class="btn btn-off" onclick="togglePeristalticPump()">Peristaltic OFF</button>
                 <button id="systemResetBtn" class="btn btn-secondary" onclick="systemReset()">System Reset</button>
+                <button id="volBtn" class="btn btn-secondary" onclick="handleVolBtnClick(event)" title="lewa 30% = ciszej, prawa 30% = głośniej" style="display:flex;align-items:center;padding-left:0;padding-right:0;gap:0;"><span style="flex:0 0 30%;text-align:center;">&#8722;</span><span id="volCenterLabel" style="flex:1;text-align:center;">Vol 3/5</span><span style="flex:0 0 30%;text-align:center;">+</span></button>
             </div>
         </div>
 
@@ -1141,6 +1140,35 @@ const char* DASHBOARD_HTML = R"rawliteral(
         // ============================================
         let systemEnabled = true;
         let maxDailyVolume = 2000;
+        let alarmLevel = 3;  // poziomy 0-5, domyślnie 3 = głośność 20
+
+        function volLevelToVol(l) { return (l + 1) * 5; }
+        function volToLevel(v)    { return Math.round(v / 5) - 1; }
+
+        function updateVolBtn() {
+            var lbl = document.getElementById('volCenterLabel');
+            if (lbl) lbl.textContent = 'Vol ' + alarmLevel + '/5';
+        }
+
+        function handleVolBtnClick(e) {
+            var el = e.currentTarget;
+            var x  = e.clientX - el.getBoundingClientRect().left;
+            var w  = el.offsetWidth;
+            var nl = alarmLevel;
+            if      (x < w * 0.30) nl = Math.max(0, alarmLevel - 1);
+            else if (x > w * 0.70) nl = Math.min(5, alarmLevel + 1);
+            else return;
+            if (nl === alarmLevel) return;
+            alarmLevel = nl;
+            updateVolBtn();
+            secureFetch('api/audio-volume', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: 'volume=' + volLevelToVol(nl)
+            }).then(function(r){ return r ? r.json() : null; })
+              .then(function(d){ if (d && !d.success) { alarmLevel = nl; updateVolBtn(); } })
+              .catch(function(){});
+        }
 
         // Direct pump button state
         var pumpBtnDownTime = 0;
@@ -1595,7 +1623,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     updatePumpButton(data.pump_active);
                     updateMixingPumpButton(data.mixing_pump_active || false);
                     updatePeristalticPumpButton(data.peristaltic_pump_active || false);
-                    if (typeof data.audio_muted !== 'undefined') updateAlarmButton(data.audio_muted);
+                    if (typeof data.audio_muted  !== 'undefined') updateAlarmButton(data.audio_muted);
+                    if (typeof data.audio_volume !== 'undefined') { alarmLevel = volToLevel(data.audio_volume); updateVolBtn(); }
 
                     // WiFi status
                     const wifiItem = document.getElementById("wifiItem");
@@ -2198,6 +2227,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         pollingIntervals.push(setInterval(loadKalkConfig, 30000));
 
         // Initial loads
+        updateVolBtn();
         updateStatus();
         loadSystemState();
         loadVolumePerSecond();

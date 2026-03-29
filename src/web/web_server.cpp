@@ -60,8 +60,9 @@ void initWebServer() {
     // System reset
     server.on("/api/system-reset", HTTP_POST, handleSystemReset);
 
-    // Alarm audio mute toggle
+    // Alarm audio mute toggle + volume
     server.on("/api/alarm-toggle", HTTP_GET | HTTP_POST, handleAlarmToggle);
+    server.on("/api/audio-volume", HTTP_GET | HTTP_POST, handleAudioVolume);
 
     // Health check endpoint (no session required)
     server.on("/api/health", HTTP_GET, handleHealth);

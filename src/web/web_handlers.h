@@ -64,6 +64,9 @@ void handleSystemReset(AsyncWebServerRequest *request);
 // Alarm audio mute toggle
 void handleAlarmToggle(AsyncWebServerRequest *request);
 
+// Alarm volume control (GET = current, POST ?volume=3-30)
+void handleAudioVolume(AsyncWebServerRequest *request);
+
 // Health check endpoint (no session required)
 void handleHealth(AsyncWebServerRequest *request);
 

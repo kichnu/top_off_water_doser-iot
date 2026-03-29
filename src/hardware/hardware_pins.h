@@ -10,9 +10,9 @@
 //       MIXING_PUMP_RELAY_PIN   GPIO  3  ──┤                ├── GND
 //          ATO_PUMP_RELAY_PIN   GPIO  4  ──┤                ├── 3.3V
 //                   RESET_PIN   GPIO  5  ──┤                ├── GPIO 10  PERYSTALTIC_PUMP
-//                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  DFPLAYER_TX_PIN (UART TX) 
-//                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8  DFPLAYER_RX_PIN (UART RX)
-//  AVAILABLE_WATER_SENSOR_PIN   GPIO 21  ──┤                ├── GPIO 20  WATER_SENSOR_PIN 
+//                 I2C_SDA_PIN   GPIO  6  ──┤                ├── GPIO  9  WATER_SENSOR_PIN
+//                 I2C_SCL_PIN   GPIO  7  ──┤                ├── GPIO  8  DFPLAYER_TX_PIN (UART TX → DFPlayer RX)
+//  AVAILABLE_WATER_SENSOR_PIN   GPIO 21  ──┤                ├── GPIO 20  wolny (UART0 RX — nie używać jako GPIO)
 //                                          └────────────────┘
 //               
 //
@@ -20,7 +20,7 @@
 
 // ============== TOP-OFF SYSTEM ==============
 #define ATO_PUMP_RELAY_PIN 4  // Pompa top-off (LOW = ON, active-LOW relay) [D2]
-#define WATER_SENSOR_PIN 20  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
+#define WATER_SENSOR_PIN 9  // Czujnik pływakowy — para równoległa (INPUT_PULLUP, active LOW)
 #define AVAILABLE_WATER_SENSOR_PIN 21   // Czujnik pływakowy  (INPUT_PULLUP, active LOW)
 
 // ============== KALKWASSER SYSTEM (2 + 1 kanał) ==============
@@ -36,13 +36,15 @@
 // ============== SYSTEM ==============
 #define RESET_PIN 5  // Przycisk resetu / provisioning (INPUT_PULLUP, active LOW)
 
-// ============== DFPLAYER PRO (Fermion DFR0768) — UART1 ==============
-#define DFPLAYER_TX_PIN 8   // ESP32 TX → DFPlayer RX  (był ERROR_SIGNAL_PIN)
-#define DFPLAYER_RX_PIN 9   // DFPlayer TX → ESP32 RX  (był wolny)
+// ============== DFPLAYER PRO (Fermion DFR0768) — UART1 TX-only ==============
+// GPIO20 (UART0 RX) nie może być użyty jako UART1 RX — periman UART0 blokuje przejęcie.
+// df.begin() timeoutouje bez ACK. Tryb TX-only: ESP32 wysyła komendy, nie odbiera statusu.
+// audio_player.cpp: initialized=true bez begin(), repeat oparty na timerze (bez isPlaying()).
+#define DFPLAYER_TX_PIN 8   // ESP32 TX → DFPlayer RX
 
 // ============== WOLNE (rezerwa) ==============
 // GPIO 2  — zwolniony (był ATO_PUMP_RELAY_PIN; ADC1_CH2 = konflikt z WiFi/periman)
-// GPIO 20 — UART0 RX (Serial = USB CDC na XIAO, GPIO20 fizycznie wolny)
-// GPIO 21 — UART0 TX (Serial = USB CDC na XIAO, GPIO21 fizycznie wolny)
+// GPIO 20 — UART0 RX — NIE UŻYWAĆ (periman conflict); kabel DFPlayer RX odłączyć
+// GPIO 21 — UART0 TX — AVAILABLE_WATER_SENSOR (idle=HIGH = brak fałszywych alarmów)
 
 #endif // HARDWARE_PINS_H
