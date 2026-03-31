@@ -159,18 +159,7 @@ bool resetErrorStatsInFRAM();
 bool incrementErrorStats(uint8_t gap1_increment, uint8_t gap2_increment, uint8_t water_increment);
 
 // ===============================
-// 🆕 NEW: AVAILABLE VOLUME FUNCTIONS
-// ===============================
-struct AvailableVolumeData {
-    uint32_t max_ml;      // Ustawiona maksymalna wartość
-    uint32_t current_ml;  // Aktualna ilość
-};
-
-bool saveAvailableVolumeToFRAM(uint32_t maxMl, uint32_t currentMl);
-bool loadAvailableVolumeFromFRAM(uint32_t& maxMl, uint32_t& currentMl);
-
-// ===============================
-// 🆕 NEW: CONFIGURABLE FILL_WATER_MAX
+// CONFIGURABLE FILL_WATER_MAX
 // ===============================
 bool saveFillWaterMaxToFRAM(uint16_t fillWaterMax);
 bool loadFillWaterMaxFromFRAM(uint16_t& fillWaterMax);

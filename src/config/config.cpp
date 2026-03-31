@@ -24,7 +24,8 @@ const int ALLOWED_IPS_COUNT = sizeof(ALLOWED_IPS) / sizeof(ALLOWED_IPS[0]);
 const char* DEVICE_ID = "UNCONFIGURED_DEVICE";
 
 // ============== SYSTEM DISABLE/ENABLE ==============
-bool systemDisabled = false;  // System starts ENABLED
+bool systemDisabled = true;   // Boot in Service Mode; auto-switch to Auto Mode after SERVICE_MODE_AUTO_ENABLE_MS
+unsigned long serviceBootStartMs = 0;  // Set in initNVS(); 0 = no boot timer active
 
 // ============== LEGACY PUMP CONTROL (to be removed) ==============
 bool pumpGlobalEnabled = true;  // Default ON
@@ -43,6 +44,9 @@ void initNVS() {
     } else {
         LOG_ERROR("Storage initialization failed!");
     }
+    // Start Service Mode boot timer — auto-switch to Auto Mode after SERVICE_MODE_AUTO_ENABLE_MS
+    serviceBootStartMs = millis();
+    LOG_INFO("Service Mode boot timer started (%lu ms)", SERVICE_MODE_AUTO_ENABLE_MS);
 }
 
 void loadVolumeFromNVS() {
@@ -66,18 +70,33 @@ void saveVolumeToNVS() {
 
 void setSystemState(bool enabled) {
     systemDisabled = !enabled;
+    serviceBootStartMs = 0;  // cancel boot timer on any manual state change
     if (enabled) {
         LOG_INFO("====================================");
-        LOG_INFO("SYSTEM ENABLED");
+        LOG_INFO("AUTO MODE — system enabled");
         LOG_INFO("Algorithm will resume operation");
         LOG_INFO("====================================");
         LOG_INFO("");
     } else {
         LOG_INFO("====================================");
-        LOG_INFO("SYSTEM DISABLED");
+        LOG_INFO("SERVICE MODE — system disabled");
         LOG_INFO("Algorithm will pause at safe point");
         LOG_INFO("====================================");
         LOG_INFO("");
+    }
+}
+
+void checkServiceAutoEnable() {
+    if (systemDisabled && serviceBootStartMs > 0) {
+        if (millis() - serviceBootStartMs >= SERVICE_MODE_AUTO_ENABLE_MS) {
+            serviceBootStartMs = 0;
+            systemDisabled = false;
+            LOG_INFO("====================================");
+            LOG_INFO("AUTO MODE — boot Service Mode timeout elapsed");
+            LOG_INFO("Algorithm resuming normal operation");
+            LOG_INFO("====================================");
+            LOG_INFO("");
+        }
     }
 }
 

@@ -138,6 +138,7 @@ void WaterAlgorithm::saveEmaToFRAM() {
 void WaterAlgorithm::update() {
     checkResetButton();
     checkPumpAutoEnable();
+    checkServiceAutoEnable();
 
     if (isSystemDisabled()) {
         handleSystemDisable();
@@ -362,21 +363,11 @@ void WaterAlgorithm::finishPumpCycle() {
     // Skanuj rolling_24h po zapisie — bieżący cykl uwzględniony
     rolling24hVolumeMl = scanRolling24h();
 
-    // Dekrementuj dostępną wodę w zbiorniku
-    if (config.available_max_ml > 0) {
-        config.available_ml = (config.available_ml >= config.dose_ml)
-                              ? config.available_ml - config.dose_ml : 0;
-        framBusy = true;
-        saveTopOffConfigToFRAM(config);
-        framBusy = false;
-    }
-
     bool dailyLimitHit = (rolling24hVolumeMl >= config.daily_limit_ml);
 
-    LOG_INFO("METRICS: dev_sigma=%d alert=%d bootstrap=%d/%d rolling=%d/%d ml avail=%d/%d ml",
+    LOG_INFO("METRICS: dev_sigma=%d alert=%d bootstrap=%d/%d rolling=%d/%d ml",
              devRateSigma, alertLevel, ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP,
-             rolling24hVolumeMl, config.daily_limit_ml,
-             config.available_ml, config.available_max_ml);
+             rolling24hVolumeMl, config.daily_limit_ml);
 
     // Obsługa błędów — po zapisaniu wszystkich danych
     if (dailyLimitHit) {
@@ -504,6 +495,12 @@ void WaterAlgorithm::handleSystemDisable() {
         return;
     }
 
+    if (currentState == STATE_MANUAL_OVERRIDE) {
+        // Manual pump is allowed in Service Mode — do not interrupt
+        if (!systemWasDisabled) systemWasDisabled = true;
+        return;
+    }
+
     if (currentState == STATE_ERROR || currentState == STATE_LOGGING) {
         if (!systemWasDisabled) {
             systemWasDisabled = true;
@@ -600,6 +597,7 @@ void WaterAlgorithm::resetFromError() {
 
 bool WaterAlgorithm::resetSystem() {
     if (currentState == STATE_LOGGING) return false;
+    if (currentState == STATE_MANUAL_OVERRIDE) return false;  // nie przerywaj ręcznej pompy
 
     if (isPumpActive()) stopPump();
 

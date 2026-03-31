@@ -247,6 +247,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             --bg-card: #111827;
             --bg-card-hover: #1a2332;
             --bg-input: #1e293b;
+            --bg-control: #33435e;
             --border: #2d3a4f;
             --text-primary: #f1f5f9;
             --text-secondary: #94a3b8;
@@ -475,6 +476,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
             color: var(--accent-yellow);
         }
         .btn-kalk-off:hover:not(:disabled) { background: rgba(234,179,8,0.18); }
+        .btn-service {
+            background: rgba(249,115,22,0.10); border: 1px solid rgba(249,115,22,0.35);
+            color: #f97316;
+        }
+        .btn-service:hover:not(:disabled) { background: rgba(249,115,22,0.20); }
         .btn-kalk-on {
             background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3);
             color: var(--accent-green);
@@ -531,6 +537,12 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
         .btn-secondary {
             background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .btn-control {
+            background: var(--bg-control);
             border: 1px solid var(--border);
             color: var(--text-secondary);
         }
@@ -921,14 +933,14 @@ const char* DASHBOARD_HTML = R"rawliteral(
             </div>
 
             <div class="pump-controls">
-                <button id="systemToggleBtn" class="btn btn-primary" onclick="toggleSystem()">System On</button>
+                <button id="systemToggleBtn" class="btn btn-service" onclick="toggleSystem()">Service Mode</button>
                 <button id="kalkwasserBtn" class="btn btn-kalk-off" onclick="toggleKalkwasser()">Kalkwasser OFF</button>
-                <button id="alarmBtn" class="btn btn-kalk-on" onclick="toggleAlarm()">Alarm ON</button>
-                <button id="manualPumpBtn" class="btn btn-off">Manual Pump OFF</button>
+                <button id="alarmBtn" class="btn btn-kalk-on" onclick="toggleAlarm()">Alert Sound ON</button>
+                <button id="manualPumpBtn" class="btn btn-off" onclick="toggleManualPump()">Pump OFF</button>
                 <button id="mixingPumpBtn" class="btn btn-off" onclick="toggleMixingPump()">Mixing Pump OFF</button>
                 <button id="peristalticPumpBtn" class="btn btn-off" onclick="togglePeristalticPump()">Peristaltic OFF</button>
-                <button id="systemResetBtn" class="btn btn-secondary" onclick="systemReset()">System Reset</button>
-                <button id="volBtn" class="btn btn-secondary" onclick="handleVolBtnClick(event)" title="lewa 30% = ciszej, prawa 30% = głośniej" style="display:flex;align-items:center;padding-left:0;padding-right:0;gap:0;"><span style="flex:0 0 30%;text-align:center;">&#8722;</span><span id="volCenterLabel" style="flex:1;text-align:center;">Vol 3/5</span><span style="flex:0 0 30%;text-align:center;">+</span></button>
+                <button id="systemResetBtn" class="btn btn-control" onclick="systemReset()">Cycle Reset</button>
+                <button id="volBtn" class="btn btn-control" onclick="handleVolBtnClick(event)" title="lewa 30% = ciszej, prawa 30% = głośniej" style="display:flex;align-items:center;padding-left:0;padding-right:0;gap:0;"><span style="flex:0 0 30%;text-align:center;">&#8722;</span><span id="volCenterLabel" style="flex:1;text-align:center;">Vol 3/5</span><span style="flex:0 0 30%;text-align:center;">+</span></button>
             </div>
         </div>
 
@@ -1081,10 +1093,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
             // Stop all polling intervals
             pollingIntervals.forEach(id => clearInterval(id));
             pollingIntervals = [];
-            if (monostableTimer) {
-                clearTimeout(monostableTimer);
-                monostableTimer = null;
-            }
+            if (pumpCountdownTimer) { clearInterval(pumpCountdownTimer); pumpCountdownTimer = null; }
+            if (mixingCountdownTimer) { clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; }
+            if (peristalticCountdownTimer) { clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; }
 
             // Show overlay
             const overlay = document.createElement('div');
@@ -1170,14 +1181,23 @@ const char* DASHBOARD_HTML = R"rawliteral(
               .catch(function(){});
         }
 
-        // Direct pump button state
-        var pumpBtnDownTime = 0;
-        var pumpBtnIsDown = false;
-        var monostableTimer = null;
-        var monostableActive = false;
+        // Manual pump countdown state
+        var pumpCountdownTimer = null;
+        var pumpOnTimeMs = 0;
+        var MANUAL_PUMP_DURATION_S = 60;
+
+        // Mixing pump countdown state
+        var mixingCountdownTimer = null;
+        var mixingOnTimeMs = 0;
+        var MIXING_PUMP_DURATION_S = 300;
+
+        // Peristaltic pump countdown state
+        var peristalticCountdownTimer = null;
+        var peristalticOnTimeMs = 0;
+        var PERISTALTIC_PUMP_DURATION_S = 60;
 
         // ============================================
-        // SYSTEM TOGGLE (bistable ON/OFF)
+        // SYSTEM TOGGLE (Auto Mode / Service Mode)
         // ============================================
         function toggleSystem() {
             const btn = document.getElementById("systemToggleBtn");
@@ -1207,11 +1227,11 @@ const char* DASHBOARD_HTML = R"rawliteral(
             if (!btn) return;
 
             if (enabled) {
-                btn.textContent = "System On";
+                btn.textContent = "Auto Mode";
                 btn.className = "btn btn-primary";
             } else {
-                btn.textContent = "System Off";
-                btn.className = "btn btn-kalk-off";
+                btn.textContent = "Service Mode";
+                btn.className = "btn btn-service";
             }
         }
 
@@ -1258,16 +1278,16 @@ const char* DASHBOARD_HTML = R"rawliteral(
             const btn = document.getElementById("alarmBtn");
             if (!btn) return;
             if (muted) {
-                btn.textContent = "Alarm OFF";
+                btn.textContent = "Alert Sound OFF";
                 btn.className = "btn btn-kalk-off";
             } else {
-                btn.textContent = "Alarm ON";
+                btn.textContent = "Alert Sound ON";
                 btn.className = "btn btn-kalk-on";
             }
         }
 
         // ============================================
-        // SYSTEM RESET (monostable)
+        // CYCLE RESET
         // ============================================
         function systemReset() {
             var btn = document.getElementById("systemResetBtn");
@@ -1281,93 +1301,69 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 .catch(function(e) { console.error("System reset error:", e); })
                 .finally(function() {
                     btn.disabled = false;
-                    btn.textContent = "System Reset";
+                    btn.textContent = "Cycle Reset";
                 });
         }
 
         // ============================================
-        // MANUAL PUMP (bistable + monostable)
+        // MANUAL PUMP (bistable + 60s countdown)
         // ============================================
-        (function initPumpBtn() {
+        function toggleManualPump() {
             var btn = document.getElementById("manualPumpBtn");
-            if (!btn) return;
-            btn.addEventListener("mousedown", onPumpBtnDown);
-            btn.addEventListener("mouseup", onPumpBtnUp);
-            btn.addEventListener("mouseleave", onPumpBtnUp);
-            btn.addEventListener("touchstart", function(e) { e.preventDefault(); onPumpBtnDown(); });
-            btn.addEventListener("touchend", function(e) { e.preventDefault(); onPumpBtnUp(); });
-        })();
-
-        function onPumpBtnDown() {
-            pumpBtnIsDown = true;
-            pumpBtnDownTime = Date.now();
-            monostableTimer = setTimeout(function() {
-                monostableActive = true;
-                fetch("api/pump/direct-on", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/x-www-form-urlencoded"},
-                    body: "mode=monostable"
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.success) {
-                        updatePumpButton(true);
-                    } else {
-                        monostableActive = false;
-                        console.error("Failed to start pump (monostable)");
-                    }
-                })
-                .catch(function(e) { monostableActive = false; console.error("Pump error:", e); });
-            }, 3000);
-        }
-
-        function onPumpBtnUp() {
-            if (!pumpBtnIsDown) return;
-            pumpBtnIsDown = false;
-            var holdDuration = Date.now() - pumpBtnDownTime;
-            if (monostableTimer) {
-                clearTimeout(monostableTimer);
-                monostableTimer = null;
-            }
-            if (monostableActive) {
-                monostableActive = false;
+            var isOn = btn.classList.contains("btn-primary");
+            btn.disabled = true;
+            if (isOn) {
                 fetch("api/pump/direct-off", { method: "POST" })
                     .then(function(r) { return r.json(); })
-                    .then(function(data) { if (data.success) updatePumpButton(false); })
-                    .catch(function(e) { console.error("Pump stop error:", e); });
-            } else if (holdDuration < 3000) {
-                var pumpIsOn = document.getElementById("manualPumpBtn").classList.contains("btn-primary");
-                if (pumpIsOn) {
-                    fetch("api/pump/direct-off", { method: "POST" })
-                        .then(function(r) { return r.json(); })
-                        .then(function(data) { if (data.success) updatePumpButton(false); })
-                        .catch(function(e) { console.error("Pump stop error:", e); });
-                } else {
-                    fetch("api/pump/direct-on", { method: "POST" })
-                        .then(function(r) { return r.json(); })
-                        .then(function(data) {
-                            if (data.success) updatePumpButton(true);
-                            else console.error("Failed to start pump");
-                        })
-                        .catch(function(e) { console.error("Pump start error:", e); });
-                }
+                    .then(function(data) { if (data.success) updatePumpButton(false); btn.disabled = false; })
+                    .catch(function(e) { console.error("Pump stop error:", e); btn.disabled = false; });
+            } else {
+                fetch("api/pump/direct-on", { method: "POST" })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.success) { pumpOnTimeMs = Date.now(); updatePumpButton(true); startPumpCountdown(); }
+                        else console.error("Failed to start pump");
+                        btn.disabled = false;
+                    })
+                    .catch(function(e) { console.error("Pump start error:", e); btn.disabled = false; });
             }
+        }
+
+        function startPumpCountdown() {
+            if (pumpCountdownTimer) clearInterval(pumpCountdownTimer);
+            pumpCountdownTimer = setInterval(function() {
+                var elapsed = Math.floor((Date.now() - pumpOnTimeMs) / 1000);
+                var remaining = MANUAL_PUMP_DURATION_S - elapsed;
+                var btn = document.getElementById("manualPumpBtn");
+                if (!btn || !btn.classList.contains("btn-primary")) {
+                    clearInterval(pumpCountdownTimer); pumpCountdownTimer = null; return;
+                }
+                if (remaining <= 0) {
+                    clearInterval(pumpCountdownTimer); pumpCountdownTimer = null; return;
+                }
+                btn.textContent = "Pump ON " + remaining + "s";
+            }, 1000);
         }
 
         function updatePumpButton(isOn) {
             var btn = document.getElementById("manualPumpBtn");
             if (!btn) return;
             if (isOn) {
-                btn.textContent = "Manual Pump ON";
+                if (!pumpOnTimeMs) pumpOnTimeMs = Date.now();
+                if (!pumpCountdownTimer) startPumpCountdown();
+                var remaining = Math.max(0, MANUAL_PUMP_DURATION_S - Math.floor((Date.now() - pumpOnTimeMs) / 1000));
+                btn.textContent = "Pump ON " + remaining + "s";
                 btn.className = "btn btn-primary";
             } else {
-                btn.textContent = "Manual Pump OFF";
+                btn.textContent = "Pump OFF";
                 btn.className = "btn btn-off";
+                if (pumpCountdownTimer) { clearInterval(pumpCountdownTimer); pumpCountdownTimer = null; }
+                pumpOnTimeMs = 0;
             }
         }
 
         // ============================================
-        // MIXING PUMP DIRECT (bistable)
+        // MIXING PUMP DIRECT (bistable + 300s countdown)
         // ============================================
         function toggleMixingPump() {
             const btn = document.getElementById("mixingPumpBtn");
@@ -1380,22 +1376,48 @@ const char* DASHBOARD_HTML = R"rawliteral(
             })
             .then(function(r) { if (!r) return null; return r.json(); })
             .then(function(data) {
-                if (data && data.success) updateMixingPumpButton(data.active);
-                else if (data) console.error("Mixing pump error:", data.error);
+                if (data && data.success) {
+                    if (data.active) mixingOnTimeMs = Date.now();
+                    updateMixingPumpButton(data.active);
+                } else if (data) console.error("Mixing pump error:", data.error);
                 btn.disabled = false;
             })
             .catch(function(e) { console.error("Mixing pump error:", e); btn.disabled = false; });
         }
 
+        function startMixingCountdown() {
+            if (mixingCountdownTimer) clearInterval(mixingCountdownTimer);
+            mixingCountdownTimer = setInterval(function() {
+                var elapsed = Math.floor((Date.now() - mixingOnTimeMs) / 1000);
+                var remaining = MIXING_PUMP_DURATION_S - elapsed;
+                var btn = document.getElementById("mixingPumpBtn");
+                if (!btn || !btn.classList.contains("btn-primary")) {
+                    clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; return;
+                }
+                if (remaining <= 0) { clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; return; }
+                btn.textContent = "Mixing ON " + remaining + "s";
+            }, 1000);
+        }
+
         function updateMixingPumpButton(isOn) {
             var btn = document.getElementById("mixingPumpBtn");
             if (!btn) return;
-            btn.textContent = isOn ? "Mixing Pump ON" : "Mixing Pump OFF";
-            btn.className   = "btn " + (isOn ? "btn-primary" : "btn-off");
+            if (isOn) {
+                if (!mixingOnTimeMs) mixingOnTimeMs = Date.now();
+                if (!mixingCountdownTimer) startMixingCountdown();
+                var remaining = Math.max(0, MIXING_PUMP_DURATION_S - Math.floor((Date.now() - mixingOnTimeMs) / 1000));
+                btn.textContent = "Mixing ON " + remaining + "s";
+                btn.className = "btn btn-primary";
+            } else {
+                btn.textContent = "Mixing Pump OFF";
+                btn.className = "btn btn-off";
+                if (mixingCountdownTimer) { clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; }
+                mixingOnTimeMs = 0;
+            }
         }
 
         // ============================================
-        // PERISTALTIC PUMP DIRECT (bistable)
+        // PERISTALTIC PUMP DIRECT (bistable + 60s countdown)
         // ============================================
         function togglePeristalticPump() {
             const btn = document.getElementById("peristalticPumpBtn");
@@ -1408,18 +1430,44 @@ const char* DASHBOARD_HTML = R"rawliteral(
             })
             .then(function(r) { if (!r) return null; return r.json(); })
             .then(function(data) {
-                if (data && data.success) updatePeristalticPumpButton(data.active);
-                else if (data) console.error("Peristaltic pump error:", data.error);
+                if (data && data.success) {
+                    if (data.active) peristalticOnTimeMs = Date.now();
+                    updatePeristalticPumpButton(data.active);
+                } else if (data) console.error("Peristaltic pump error:", data.error);
                 btn.disabled = false;
             })
             .catch(function(e) { console.error("Peristaltic pump error:", e); btn.disabled = false; });
         }
 
+        function startPeristalticCountdown() {
+            if (peristalticCountdownTimer) clearInterval(peristalticCountdownTimer);
+            peristalticCountdownTimer = setInterval(function() {
+                var elapsed = Math.floor((Date.now() - peristalticOnTimeMs) / 1000);
+                var remaining = PERISTALTIC_PUMP_DURATION_S - elapsed;
+                var btn = document.getElementById("peristalticPumpBtn");
+                if (!btn || !btn.classList.contains("btn-primary")) {
+                    clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; return;
+                }
+                if (remaining <= 0) { clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; return; }
+                btn.textContent = "Peristaltic ON " + remaining + "s";
+            }, 1000);
+        }
+
         function updatePeristalticPumpButton(isOn) {
             var btn = document.getElementById("peristalticPumpBtn");
             if (!btn) return;
-            btn.textContent = isOn ? "Peristaltic ON" : "Peristaltic OFF";
-            btn.className   = "btn " + (isOn ? "btn-primary" : "btn-off");
+            if (isOn) {
+                if (!peristalticOnTimeMs) peristalticOnTimeMs = Date.now();
+                if (!peristalticCountdownTimer) startPeristalticCountdown();
+                var remaining = Math.max(0, PERISTALTIC_PUMP_DURATION_S - Math.floor((Date.now() - peristalticOnTimeMs) / 1000));
+                btn.textContent = "Peristaltic ON " + remaining + "s";
+                btn.className = "btn btn-primary";
+            } else {
+                btn.textContent = "Peristaltic OFF";
+                btn.className = "btn btn-off";
+                if (peristalticCountdownTimer) { clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; }
+                peristalticOnTimeMs = 0;
+            }
         }
 
         // ============================================

@@ -180,8 +180,6 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
         algCfg.dose_ml          = DEFAULT_DOSE_ML;
         algCfg.daily_limit_ml   = DEFAULT_DAILY_LIMIT_ML;
         algCfg.history_window_s = DEFAULT_HISTORY_WINDOW_S;
-        algCfg.available_ml     = 0;
-        algCfg.available_max_ml = 0;
     }
     algCfg.ema_alpha         = emaAlpha;
     algCfg.rate_yellow_sigma = (uint8_t)yellowSigma;

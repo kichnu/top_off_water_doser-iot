@@ -55,9 +55,10 @@ void KalkwasserScheduler::init() {
 // ============================================================
 
 void KalkwasserScheduler::update() {
-    // System-wide disable: stop everything immediately
+    // System-wide disable: stop scheduled operations; allow manual direct control
     if (isSystemDisabled()) {
-        if (state != KALK_IDLE && state != KALK_CALIBRATING) {
+        if (state != KALK_IDLE && state != KALK_CALIBRATING &&
+            state != KALK_DIRECT_MIX && state != KALK_DIRECT_DOSE) {
             stopPeristalticPump();
             stopMixingPump();
             state = KALK_IDLE;
@@ -177,8 +178,19 @@ void KalkwasserScheduler::update() {
             break;
 
         case KALK_DIRECT_MIX:
+            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_MIX_TIMEOUT_S * 1000UL)) {
+                stopMixingPump();
+                state = KALK_IDLE;
+                LOG_WARNING("KalkwasserScheduler: mixing pump DIRECT timeout → IDLE");
+            }
+            break;
+
         case KALK_DIRECT_DOSE:
-            // Stay until explicit directMixOff()/directDoseOff() or system disable
+            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_DOSE_TIMEOUT_S * 1000UL)) {
+                stopPeristalticPump();
+                state = KALK_IDLE;
+                LOG_WARNING("KalkwasserScheduler: peristaltic pump DIRECT timeout → IDLE");
+            }
             break;
     }
 }
@@ -238,8 +250,9 @@ void KalkwasserScheduler::stopCalibration() {
 bool KalkwasserScheduler::directMixOn() {
     if (state != KALK_IDLE) return false;
     startMixingPump();
-    state = KALK_DIRECT_MIX;
-    LOG_INFO("KalkwasserScheduler: mixing pump DIRECT ON");
+    state        = KALK_DIRECT_MIX;
+    stateStartMs = millis();
+    LOG_INFO("KalkwasserScheduler: mixing pump DIRECT ON (auto-off in %ds)", KALK_DIRECT_MIX_TIMEOUT_S);
     return true;
 }
 
@@ -253,9 +266,10 @@ void KalkwasserScheduler::directMixOff() {
 
 bool KalkwasserScheduler::directDoseOn() {
     if (state != KALK_IDLE) return false;
-    startPeristalticPump(0);   // durationSeconds=0 → continuous, no auto-stop
-    state = KALK_DIRECT_DOSE;
-    LOG_INFO("KalkwasserScheduler: peristaltic pump DIRECT ON (continuous)");
+    startPeristalticPump(0);   // durationSeconds=0 → continuous, backend timeout handled by scheduler
+    state        = KALK_DIRECT_DOSE;
+    stateStartMs = millis();
+    LOG_INFO("KalkwasserScheduler: peristaltic pump DIRECT ON (auto-off in %ds)", KALK_DIRECT_DOSE_TIMEOUT_S);
     return true;
 }
 

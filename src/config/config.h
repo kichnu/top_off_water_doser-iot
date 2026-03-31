@@ -23,10 +23,14 @@ extern const IPAddress TRUSTED_PROXY_IP;
 
 // ============== SYSTEM DISABLE/ENABLE ==============
 extern bool systemDisabled;
+extern unsigned long serviceBootStartMs;
+
+#define SERVICE_MODE_AUTO_ENABLE_MS (15UL * 60UL * 1000UL)  // 15 min after boot
 
 // System state functions (declare BEFORE any mode_config includes)
 void setSystemState(bool enabled);
 bool isSystemDisabled();
+void checkServiceAutoEnable();
 
 // Global pump control (LEGACY - kept for compatibility, will be removed)
 extern bool pumpGlobalEnabled;

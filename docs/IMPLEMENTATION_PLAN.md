@@ -343,3 +343,12 @@ lib_deps =
 | PROV_FEEDBACK_PIN = 2 → aktywacja pompy przy boot | Zmieniono na GPIO8 (ERROR_SIGNAL_PIN) |
 | Wire.begin() musi być przed initFRAM() | Kolejność w main.cpp: Wire.begin() → initNVS() |
 | ESPAsyncWebServer POST: `hasParam(name, true)` wymaga `application/x-www-form-urlencoded` | Wszystkie POST wysyłają form-encoded, nie JSON |
+
+
+
+
+
+
+
+
+Zapisano. Plik project_service_mode.md zawiera:  

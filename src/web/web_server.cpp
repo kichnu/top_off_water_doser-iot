@@ -36,12 +36,7 @@ void initWebServer() {
     server.on("/api/daily-volume", HTTP_GET, handleGetDailyVolume);
     server.on("/api/reset-daily-volume", HTTP_POST, handleResetDailyVolume);
 
-    // 🆕 NEW: Available Volume endpoints
-    server.on("/api/available-volume", HTTP_GET, handleGetAvailableVolume);
-    server.on("/api/set-available-volume", HTTP_POST, handleSetAvailableVolume);
-    server.on("/api/refill-available-volume", HTTP_POST, handleRefillAvailableVolume);
-    
-    // 🆕 NEW: Fill Water Max / Dose endpoints
+    // Fill Water Max / Dose endpoints
     server.on("/api/fill-water-max", HTTP_GET, handleGetFillWaterMax);
     server.on("/api/set-fill-water-max", HTTP_POST, handleSetFillWaterMax);  // daily_limit_ml
     server.on("/api/set-dose", HTTP_POST, handleSetDose);                    // dose_ml

@@ -122,8 +122,7 @@ struct TopOffConfig {
     uint8_t  rate_red_sigma;      // Próg czerwony — mnożnik sigma [%], np. 250 = 2.5× EMA_dev
     uint8_t  is_configured;       // 0xA7 = konfiguracja zapisana w FRAM (nowa wersja)
     uint8_t  _pad[1];             // Wyrównanie
-    uint16_t available_ml;        // Dostępna woda w zbiorniku [ml] — dekrementowana po każdym cyklu
-    uint16_t available_max_ml;    // Pojemność zbiornika przy ostatnim uzupełnieniu [ml]
+    uint16_t _reserved_available[2];  // Zarezerwowane (nie używane) — zachowane dla spójności FRAM
 };
 static_assert(sizeof(TopOffConfig) == 20, "TopOffConfig must be exactly 20 bytes");
 

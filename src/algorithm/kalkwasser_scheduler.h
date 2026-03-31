@@ -23,6 +23,8 @@
 #define KALK_WAIT_TIMEOUT_S    600    // 10 min max wait for top-off
 #define KALK_CALIBRATION_S     30     // calibration run duration
 #define KALK_DOSES_PER_DAY     16     // doses/day based on fixed schedule
+#define KALK_DIRECT_MIX_TIMEOUT_S   300   // 5 min auto-off for manual mixing pump
+#define KALK_DIRECT_DOSE_TIMEOUT_S   60   // 60 s auto-off for manual peristaltic pump
 
 enum KalkwasserState {
     KALK_IDLE = 0,
