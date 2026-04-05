@@ -1399,18 +1399,27 @@ const char* DASHBOARD_HTML = R"rawliteral(
             }, 1000);
         }
 
-        function updateMixingPumpButton(isOn) {
+        function updateMixingPumpButton(isOn, kalkState) {
             var btn = document.getElementById("mixingPumpBtn");
             if (!btn) return;
-            if (isOn) {
+            if (isOn && kalkState === "DIRECT_MIX") {
                 if (!mixingOnTimeMs) mixingOnTimeMs = Date.now();
                 if (!mixingCountdownTimer) startMixingCountdown();
                 var remaining = Math.max(0, MIXING_PUMP_DURATION_S - Math.floor((Date.now() - mixingOnTimeMs) / 1000));
                 btn.textContent = "Mixing ON " + remaining + "s";
                 btn.className = "btn btn-primary";
+                btn.disabled = false;
+            } else if (isOn) {
+                // Scheduled cycle — do not interfere
+                btn.textContent = "Mixing ON (auto)";
+                btn.className = "btn btn-primary";
+                btn.disabled = true;
+                if (mixingCountdownTimer) { clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; }
+                mixingOnTimeMs = 0;
             } else {
                 btn.textContent = "Mixing Pump OFF";
                 btn.className = "btn btn-off";
+                btn.disabled = false;
                 if (mixingCountdownTimer) { clearInterval(mixingCountdownTimer); mixingCountdownTimer = null; }
                 mixingOnTimeMs = 0;
             }
@@ -1453,18 +1462,27 @@ const char* DASHBOARD_HTML = R"rawliteral(
             }, 1000);
         }
 
-        function updatePeristalticPumpButton(isOn) {
+        function updatePeristalticPumpButton(isOn, kalkState) {
             var btn = document.getElementById("peristalticPumpBtn");
             if (!btn) return;
-            if (isOn) {
+            if (isOn && kalkState === "DIRECT_DOSE") {
                 if (!peristalticOnTimeMs) peristalticOnTimeMs = Date.now();
                 if (!peristalticCountdownTimer) startPeristalticCountdown();
                 var remaining = Math.max(0, PERISTALTIC_PUMP_DURATION_S - Math.floor((Date.now() - peristalticOnTimeMs) / 1000));
                 btn.textContent = "Peristaltic ON " + remaining + "s";
                 btn.className = "btn btn-primary";
+                btn.disabled = false;
+            } else if (isOn) {
+                // Scheduled cycle — do not interfere
+                btn.textContent = "Peristaltic ON (auto)";
+                btn.className = "btn btn-primary";
+                btn.disabled = true;
+                if (peristalticCountdownTimer) { clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; }
+                peristalticOnTimeMs = 0;
             } else {
                 btn.textContent = "Peristaltic OFF";
                 btn.className = "btn btn-off";
+                btn.disabled = false;
                 if (peristalticCountdownTimer) { clearInterval(peristalticCountdownTimer); peristalticCountdownTimer = null; }
                 peristalticOnTimeMs = 0;
             }
@@ -1669,8 +1687,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
                     // Sync manual pump button with actual pump state
                     updatePumpButton(data.pump_active);
-                    updateMixingPumpButton(data.mixing_pump_active || false);
-                    updatePeristalticPumpButton(data.peristaltic_pump_active || false);
+                    updateMixingPumpButton(data.mixing_pump_active || false, data.kalk_state || "");
+                    updatePeristalticPumpButton(data.peristaltic_pump_active || false, data.kalk_state || "");
                     if (typeof data.audio_muted  !== 'undefined') updateAlarmButton(data.audio_muted);
                     if (typeof data.audio_volume !== 'undefined') { alarmLevel = volToLevel(data.audio_volume); updateVolBtn(); }
 

@@ -69,12 +69,12 @@ void KalkwasserScheduler::update() {
 
     updatePeristalticPump();   // drive auto-stop timer
 
+    uint32_t nowTs = (uint32_t)getUnixTimestamp();
+    checkDayRollover(nowTs);   // always run — clears done_bits even when disabled
+
     if (!enabled) return;
 
-    uint32_t nowTs = (uint32_t)getUnixTimestamp();
     uint32_t nowMs = millis();
-
-    checkDayRollover(nowTs);
 
     switch (state) {
 
@@ -306,8 +306,12 @@ bool KalkwasserScheduler::isDoseTime(uint32_t nowTs) const {
 bool KalkwasserScheduler::isHourBlocked(int localHour) const {
     // Blocked window per mix slot: [MIX_MINUTE, MIX_MINUTE + MIX_DURATION_MIN + 60)
     // In minutes from midnight.  MIX_DURATION_S/60 = 5min → window = [15, 80)
+    // Also block the mix base hour itself: dosing fires at :00 but mix is at :15 —
+    // the base hour (0,6,12,18) is absent from DOSE_HOURS_ARR so the done-bit
+    // would never be set and the GUI has no tile for it.
     int h_min = localHour * 60;
     for (int i = 0; i < 4; i++) {
+        if (localHour == MIX_BASE_HOURS[i]) return true;
         int block_start = MIX_BASE_HOURS[i] * 60 + MIX_MINUTE;
         int block_end   = block_start + KALK_MIX_DURATION_S / 60 + 60;  // 5 + 60 = 65 min
         if (h_min >= block_start && h_min < block_end) return true;
