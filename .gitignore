@@ -87,8 +87,8 @@ node_modules/
 
 # Python (if build scripts)
 __pycache__/
-*.py[cod]
-*$py.class
+# *.py[cod]
+# *$py.class
 
 # Local configuration files (protect sensitive data)
 src/config/secrets.h

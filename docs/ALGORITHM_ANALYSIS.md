@@ -239,3 +239,93 @@ Można podnieść `rate_yellow_sigma` przez API (`/api/pump-settings` — do roz
 Zmiana `TOPOFF_CONFIG_MAGIC` (np. z 0xA6 na 0xA7) kasuje `available_ml/max` do domyślnych (0).
 Ring buffer i EMA są kasowane oddzielnie przez `isTopOffRingBufferValid()` — tylko gdy `count > 60`.
 Przy normalnej pracy ring buffer i EMA przeżywają zmianę magic (są chronione osobnymi checksumami).
+
+
+
+
+
+❯ Wróćmy do wykresu zdarzeń i EMA Opisz mi jak algorytm liczy pozycje(y) punktów na osi oraz wartość EMA po każdym dolaniu                      
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Mam pełny obraz. Teraz mogę dokładnie opisać całą mechanikę.
+
+  ---
+  Oś X — pozycja pozioma
+
+  Każdy punkt ląduje na osi czasu wg swojego timestamp (Unix UTC z RTC):
+
+  function xOf(ts) { return p.l + (ts - minTs) / tsRange * cw; }
+
+  minTs = timestamp najstarszego punktu (lub maxTs - 6h jeśli historia krótsza). Punkty są rozmieszczone proporcjonalnie do czasu — nie do
+  numeru cyklu.
+
+  ---
+  Oś Y — pozycja pionowa (rate_ml_h)
+
+  function yOf(v) { return p.t + (1 - (v - yMin) / (yMax - yMin)) * ch; }
+
+  Zakres [yMin, yMax] jest dynamiczny — obliczany przed rysowaniem:
+
+  rates = visPts.filter(rate > 0).map(rate_ml_h)
+  yMin = min(wszystkich rate)
+  yMax = max(wszystkich rate)
+
+  // Rozszerzenie o strefy EMA (jeśli EMA dojrzała):
+  yMin = min(yMin, max(0, ema_rate - red_sigma/100 * ema_dev))
+  yMax = max(yMax, ema_rate + red_sigma/100 * ema_dev)
+
+  // Padding 18%:
+  rpad = (yMax - yMin) * 0.18
+  yMin = max(0, yMin - rpad)
+  yMax += rpad
+
+  Każdy punkt to po prostu:
+  rate_ml_h = dose_ml / interval_s × 3600
+  czyli 150 ml / 300 s × 3600 = 1800 ml/h dla 5-minutowego interwału.
+
+  ---
+  EMA — jak jest liczona po każdym dolaniu
+
+  W finishPumpCycle() → updateEMA(intervalS, rateMlH):
+
+  // Zdarzenie 1 (bootstrap_count == 0):
+  ema_rate  = rateMlH          // inicjalizacja bezpośrednio
+  ema_interval = intervalS
+  ema_dev   = 0.0
+
+  // Zdarzenie 2+ (bootstrap_count > 0):
+  dev           = |rateMlH - ema_rate|         // odchylenie absolutne
+  ema_rate      = α × rateMlH  + (1-α) × ema_rate
+  ema_interval  = α × intervalS + (1-α) × ema_interval
+  ema_dev       = α × dev       + (1-α) × ema_dev
+
+  // α = 0.30 (default)
+  bootstrap_count++
+
+  Na wykresie rysowana jest pozioma przerywana linia na stałej wysokości yOf(ema_rate) — ta sama wartość dla całego zakresu czasu. EMA nie jest
+  historyzowana per-punkt, to tylko aktualny stan z pamięci.
+
+  ---
+  Problem który widziałeś na wykresie — liczbowo
+
+  Przykład: normalny interwał 4h → rate = 150/14400×3600 = 37.5 ml/h
+
+  ┌───────────┬──────────┬──────┬────────────────────────────────────┐
+  │ Zdarzenie │ interval │ rate │         ema_rate (α=0.30)          │
+  ├───────────┼──────────┼──────┼────────────────────────────────────┤
+  │ 1         │ 4h       │ 37.5 │ 37.5 (init)                        │
+  ├───────────┼──────────┼──────┼────────────────────────────────────┤
+  │ 2         │ 4h       │ 37.5 │ 37.5                               │
+  ├───────────┼──────────┼──────┼────────────────────────────────────┤
+  │ 3         │ 5 min    │ 1800 │ 0.3×1800 + 0.7×37.5 = **566 ml/h** │
+  ├───────────┼──────────┼──────┼────────────────────────────────────┤
+  │ 4         │ 15 min   │ 600  │ 0.3×600 + 0.7×566 = **576 ml/h**   │
+  ├───────────┼──────────┼──────┼────────────────────────────────────┤
+  │ 5         │ 4h       │ 37.5 │ 0.3×37.5 + 0.7×576 = **414 ml/h**  │
+  └───────────┴──────────┴──────┴────────────────────────────────────┘
+
+  Punkt 5 (rate=37.5) jest teraz daleko poniżej EMA=414 → na wykresie wygląda jak przepaść, choć to całkowicie normalna dolewka. EMA będzie
+  wracać do baseline przez wiele cykli.
+
+✻ Cogitated for 33s
