@@ -159,7 +159,10 @@ void setup() {
     LOG_INFO("  State: %s", waterAlgorithm.getStateString());
     LOG_INFO("  Rolling 24h: %d ml", waterAlgorithm.getRolling24hVolume());
     LOG_INFO("  Dose: %d ml, daily limit: %d ml", waterAlgorithm.getConfig().dose_ml, waterAlgorithm.getConfig().daily_limit_ml);
-    LOG_INFO("  EMA bootstrap: %d/%d", waterAlgorithm.getEma().bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
+    LOG_INFO("  EMA bootstrap: %d rate=%.2f score=%.2f",
+             waterAlgorithm.getEma().bootstrap_count,
+             waterAlgorithm.getEma().ema_rate_ml_h,
+             waterAlgorithm.getEma().alarm_score);
     
     if (isWiFiConnected()) {
         LOG_INFO("Dashboard: http://");

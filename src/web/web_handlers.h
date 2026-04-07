@@ -59,6 +59,9 @@ void handleSystemReset(AsyncWebServerRequest *request);
 // Alarm audio mute toggle
 void handleAlarmToggle(AsyncWebServerRequest *request);
 
+// Algorithm config (GET = current, POST = save all 7 params)
+void handleAlgConfig(AsyncWebServerRequest *request);
+
 // Alarm volume control (GET = current, POST ?volume=3-30)
 void handleAudioVolume(AsyncWebServerRequest *request);
 

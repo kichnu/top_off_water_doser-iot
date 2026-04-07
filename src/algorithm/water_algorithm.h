@@ -10,12 +10,14 @@
 // Stany: IDLE → DEBOUNCING → PUMPING → LOGGING → IDLE
 //                                     ↘ STATE_ERROR (limit dobowy / czerwony alert)
 //
-// Dozowanie stałe:
-//   Pompa startuje po potwierdzeniu debouncingu czujnika.
-//   Pracuje przez stały czas = dose_ml / flow_rate [s].
-//   Dawka (dose_ml) konfigurowana w GUI/provisioning.
-//   Rate [ml/h] = dose_ml / interval_od_poprzedniej × 3600.
-//   EMA śledzi rate i typowe odchylenia (ema_dev_ml_h) → dynamiczne progi alertów.
+// Algorytm alarmu (score-based):
+//   Każda dolewka liczy odchylenie d = (rate - EMA) / EMA.
+//   Przy d > 0: alarm_score rośnie (P1 × log2(1+d) × 100).
+//   Przy d ≤ 0: alarm_score zanika (mnożnik P2).
+//   Strefy: score < zone_green → zielony, < zone_yellow → żółty, else → czerwony.
+//   Czerwona strefa → STATE_ERROR (pompa blokowana), alarm SOUND.
+//   Po resecie: alarmArmed = false — alarm nie odpali ponownie dopóki
+//   score nie spadnie poniżej zone_yellow (re-arm w zielonej/żółtej strefie).
 // ============================================================
 
 class WaterAlgorithm {
@@ -23,28 +25,33 @@ private:
     AlgorithmState currentState;
 
     // ---- Timing ----
-    uint32_t stateStartMs;        // millis() ostatniej zmiany stanu
-    uint32_t pumpStartMs;         // millis() startu pompy w bieżącym cyklu
+    uint32_t stateStartMs;
+    uint32_t pumpStartMs;
 
     // ---- Tracking interwałów ----
-    uint32_t lastTopOffTimestamp; // Unix UTC ostatniej zakończonej dolewki
-    uint16_t totalCycleCount;     // Sekwencyjny numer cyklu (ciągły między restartami)
+    uint32_t lastTopOffTimestamp;
+    uint16_t totalCycleCount;
 
-    // ---- Rolling 24h (cache, przeliczany po każdym cyklu) ----
+    // ---- Rolling 24h (cache) ----
     uint16_t rolling24hVolumeMl;
-    uint32_t manualResetTs;   // RAM-only: ignore records older than this (0 = inactive)
+    uint32_t manualResetTs;
 
     // ---- Konfiguracja (FRAM lub defaults) ----
     TopOffConfig config;
 
-    // ---- EMA (persystowane w FRAM) ----
+    // ---- EMA + alarm score (persystowane w FRAM) ----
     EmaBlock ema;
+
+    // ---- Alarm hystereza ----
+    // true  = alarm może odpalić przy wejściu w czerwoną strefę
+    // false = alarm wyciszony po resecie; re-arm gdy score < zone_yellow
+    bool alarmArmed;
 
     // ---- Obsługa błędów ----
     ErrorCode lastError;
 
     // ---- Czujnik dostępności wody ----
-    uint8_t lowReservoirCount;  // Licznik kolejnych wykryć LOW (w RAM, reset przy restarcie)
+    uint8_t lowReservoirCount;
 
     // ---- Flagi stanu ----
     bool systemWasDisabled;
@@ -53,24 +60,18 @@ private:
     // ---- Metody prywatne ----
     void handleSystemDisable();
 
-    // Pump control
     void startAutoPump();
     void finishPumpCycle();
 
-    // Czujnik dostępności wody
     void checkAvailableWaterSensor();
 
-    // EMA i metryki
     void    updateEMA(uint32_t intervalS, float rateMlH);
-    uint8_t calculateAlertLevel(int8_t devRateSigma) const;
-    int8_t  calculateDevSigma(float rateMlH) const;
+    uint8_t calculateAlertLevel() const;
     uint16_t scanRolling24h() const;
 
-    // Error handling
     void startErrorSignal(ErrorCode error);
     void checkResetButton();
 
-    // FRAM
     void loadConfigFromFRAM();
     void loadEmaFromFRAM();
     void saveEmaToFRAM();
@@ -78,16 +79,13 @@ private:
 public:
     WaterAlgorithm();
 
-    // Wywołaj z setup() po initFRAM()
     void initFromFRAM();
-
-    // Wywołaj z loop()
     void update();
 
     // ---- Callbacki z water_sensors ----
-    void onDebounceStart();     // Pierwsze LOW wykryte — debouncing startuje
-    void onDebounceComplete();  // Debouncing zaliczony — czas na pompę
-    void onDebounceReset();     // Sensor wrócił do HIGH podczas debouncing
+    void onDebounceStart();
+    void onDebounceComplete();
+    void onDebounceReset();
 
     // ---- Status ----
     AlgorithmState getState()            const { return currentState; }
@@ -111,7 +109,10 @@ public:
     // ---- EMA (tylko do odczytu dla API) ----
     const EmaBlock& getEma() const { return ema; }
 
-    // ---- Interfejs ręczny (manual pump) ----
+    // ---- Alarm hystereza ----
+    bool isAlarmArmed() const { return alarmArmed; }
+
+    // ---- Interfejs ręczny ----
     bool requestManualPump(uint16_t durationMs);
     void onManualPumpComplete();
     void addManualVolume(uint16_t volumeMl);
@@ -119,8 +120,8 @@ public:
     // ---- Reset / odzyskiwanie ----
     void resetFromError();
     bool resetSystem();
-    bool resetCycleHistory();  // Czyści ring buffer FRAM + in-memory EMA
-    void resetRolling24h();    // RAM-only reset: zeruje licznik dobowy bez kasowania historii
+    bool resetCycleHistory();
+    void resetRolling24h();
 
     // ---- System disable ----
     bool wasSystemDisabled() const { return systemWasDisabled; }

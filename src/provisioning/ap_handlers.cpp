@@ -92,9 +92,7 @@ void handleProvConfig(AsyncWebServerRequest *request) {
 
     StaticJsonDocument<192> doc;
     doc["device_name"]   = hasExisting ? String(existingFram.device_name) : "";
-    doc["ema_alpha"]     = hasCfg ? (double)algCfg.ema_alpha         : (double)DEFAULT_EMA_ALPHA;
-    doc["yellow_sigma"]  = hasCfg ? (int)algCfg.rate_yellow_sigma    : (int)DEFAULT_RATE_YELLOW_SIGMA;
-    doc["red_sigma"]     = hasCfg ? (int)algCfg.rate_red_sigma       : (int)DEFAULT_RATE_RED_SIGMA;
+    doc["ema_alpha"]     = hasCfg ? (double)algCfg.ema_alpha : (double)DEFAULT_EMA_ALPHA;
     doc["is_configured"] = hasExisting;
 
     String response;
@@ -113,8 +111,6 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
     String wifiPassword  = obj["wifi_password"]  | "";
     String adminPassword = obj["admin_password"] | "";
     float  emaAlpha      = obj["ema_alpha"]      | (float)DEFAULT_EMA_ALPHA;
-    int    yellowSigma   = obj["yellow_sigma"]   | (int)DEFAULT_RATE_YELLOW_SIGMA;
-    int    redSigma      = obj["red_sigma"]      | (int)DEFAULT_RATE_RED_SIGMA;
 
     // Helper: send error response
     auto sendError = [&](int code, const String& msg, const String& field = "") {
@@ -132,12 +128,6 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
 
     if (emaAlpha < 0.05f || emaAlpha > 0.50f) {
         sendError(400, "EMA alpha must be 0.05 – 0.50", "ema_alpha"); return;
-    }
-    if (yellowSigma < 50 || yellowSigma > 500) {
-        sendError(400, "Warning threshold must be 50 – 500", "yellow_sigma"); return;
-    }
-    if (redSigma < 100 || redSigma > 1000 || redSigma <= yellowSigma) {
-        sendError(400, "Error threshold must be 100 – 1000 and greater than warning", "red_sigma"); return;
     }
 
     // --- Read existing FRAM --------------------------------------------------
@@ -181,13 +171,11 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
         algCfg.daily_limit_ml   = DEFAULT_DAILY_LIMIT_ML;
         algCfg.history_window_s = DEFAULT_HISTORY_WINDOW_S;
     }
-    algCfg.ema_alpha         = emaAlpha;
-    algCfg.rate_yellow_sigma = (uint8_t)yellowSigma;
-    algCfg.rate_red_sigma    = (uint8_t)redSigma;
-    algCfg.is_configured     = TOPOFF_CONFIG_MAGIC;
+    algCfg.ema_alpha     = emaAlpha;
+    algCfg.is_configured = TOPOFF_CONFIG_MAGIC;
 
     saveTopOffConfigToFRAM(algCfg);
-    LOG_INFO("Algorithm config saved: alpha=%.2f yellow=%d red=%d", emaAlpha, yellowSigma, redSigma);
+    LOG_INFO("Algorithm config saved: alpha=%.2f", emaAlpha);
 
     // --- Success -------------------------------------------------------------
     StaticJsonDocument<192> respDoc;

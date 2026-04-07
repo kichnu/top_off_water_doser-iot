@@ -911,8 +911,8 @@ bool saveEmaBlockToFRAM(const EmaBlock& ema) {
     uint16_t chksum = calculateChecksum((uint8_t*)&ema, sizeof(EmaBlock));
     fram.write(FRAM_ADDR_EMA_CHKSUM, (uint8_t*)&chksum, 2);
 
-    LOG_INFO("EMA block saved: rate=%.2f dev=%.2f int=%.0fs bootstrap=%d",
-             ema.ema_rate_ml_h, ema.ema_dev_ml_h, ema.ema_interval_s, ema.bootstrap_count);
+    LOG_INFO("EMA block saved: rate=%.2f score=%.2f int=%.0fs bootstrap=%d",
+             ema.ema_rate_ml_h, ema.alarm_score, ema.ema_interval_s, ema.bootstrap_count);
     return true;
 }
 
@@ -939,7 +939,7 @@ bool loadEmaBlockFromFRAM(EmaBlock& ema) {
 // 🆕 TOP-OFF CONFIG
 // ================================================================
 
-static_assert(sizeof(TopOffConfig) == 20, "TopOffConfig size mismatch!");
+static_assert(sizeof(TopOffConfig) == 40, "TopOffConfig size mismatch!");
 
 bool saveTopOffConfigToFRAM(const TopOffConfig& cfg) {
     if (!framInitialized) return false;

@@ -1017,14 +1017,47 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     <button class="chart-scroll-btn" id="chartScrollLeft">&#9664;</button>
                     <button class="chart-scroll-btn" id="chartScrollRight">&#9654;</button>
                 </div>
-                <div class="chart-legend">
+                <div class="chart-legend" style="align-items:center;">
                     <span><span style="background:#4ade8022;border:1px solid #4ade8055;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Normal</span>
                     <span><span style="background:#fbbf2422;border:1px solid #fbbf2455;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Warning</span>
                     <span><span style="background:#f8717122;border:1px solid #f8717155;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Alarm</span>
                     <span><span style="color:#94a3b8;font-weight:bold;">&#8212;</span> EMA</span>
                     <span id="legendEmaRate" style="color:var(--text-secondary);border-left:1px solid var(--border);padding-left:10px;display:none;"></span>
-                    <span id="legendWarnBand" style="color:#fbbf24;display:none;"></span>
-                    <span id="legendAlarmBand" style="color:#f87171;display:none;"></span>
+                    <span id="scoreZoneBadge" style="display:none;padding-left:10px;font-weight:600;border-left:1px solid var(--border);"></span>
+                    <button onclick="toggleAlgSettings()" id="algSettingsBtn"
+                        style="margin-left:auto;font-size:0.70rem;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-muted);cursor:pointer;">
+                        &#9881; Settings</button>
+                </div>
+                <div id="algSettingsPanel" style="display:none;margin-top:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;">
+                    <div style="font-size:0.68rem;font-weight:600;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;">Algorithm Parameters</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px 14px;">
+                        <label style="font-size:0.72rem;color:var(--text-muted);">EMA Alpha (0.05–0.50)
+                            <input type="number" id="algAlpha" min="0.05" max="0.50" step="0.01"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">EMA Clamp (0.10–0.80)
+                            <input type="number" id="algClamp" min="0.10" max="0.80" step="0.01"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">P1 spike weight (0.01–2.0)
+                            <input type="number" id="algP1" min="0.01" max="2.0" step="0.01"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">P2 decay speed (0.05–0.99)
+                            <input type="number" id="algP2" min="0.05" max="0.99" step="0.01"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">Zone Green (1–200)
+                            <input type="number" id="algZoneGreen" min="1" max="200" step="0.5"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">Zone Yellow (&gt;green, max 500)
+                            <input type="number" id="algZoneYellow" min="1" max="500" step="0.5"
+                                style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">Initial EMA ml/h (1–500)
+                            <input type="number" id="algInitEma" min="1" max="500" step="1"
+                                style="width:100%;margin-top:3px;"></label>
+                    </div>
+                    <div id="algSettingsError" style="display:none;color:#f87171;font-size:0.72rem;margin-top:8px;"></div>
+                    <div style="display:flex;gap:8px;margin-top:10px;">
+                        <button class="btn btn-primary btn-small" onclick="saveAlgSettings()" id="algSaveBtn">Save</button>
+                        <button class="btn btn-secondary btn-small" onclick="toggleAlgSettings()">Cancel</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1955,16 +1988,23 @@ const char* DASHBOARD_HTML = R"rawliteral(
             var visPts = pts.filter(function(c) { return c.ts >= minTs; });
 
             var rates = visPts.filter(function(c){return c.rate_ml_h>0;}).map(function(c){return c.rate_ml_h;});
-            var hasEma = ema.ema_dev > 0.01 && ema.bootstrap >= 3;
-            var yMin=0, yMax=100;
-            if (rates.length) { yMin=Math.min.apply(null,rates); yMax=Math.max.apply(null,rates); }
-            if (hasEma) {
-                var rDev0=ema.red_sigma/100*ema.ema_dev;
-                yMin=Math.min(yMin, Math.max(0,ema.ema_rate-rDev0));
-                yMax=Math.max(yMax, ema.ema_rate+rDev0);
-            }
-            var rpad=(yMax-yMin)*0.18||yMax*0.18||5;
-            yMin=Math.max(0,yMin-rpad); yMax+=rpad;
+            var hasEma = ema.ema_rate > 0.01;
+
+            // Oblicz granice stref na podstawie score → d → ml/h
+            // dGreen  = 2^(zone_green  / (p1*100)) - 1
+            // dYellow = 2^(zone_yellow / (p1*100)) - 1
+            // Szer. czerwonego bandu = szer. żółtego (symetria)
+            var dGreen  = hasEma ? (Math.pow(2, ema.zone_green  / (ema.alarm_p1 * 100)) - 1) : 0;
+            var dYellow = hasEma ? (Math.pow(2, ema.zone_yellow / (ema.alarm_p1 * 100)) - 1) : 0;
+            var bandW_green  = ema.ema_rate * dGreen;
+            var bandW_yellow = ema.ema_rate * (dYellow - dGreen);
+            // Górna granica wykresu: EMA + yellow + red (= yellow)
+            var yChartMax = hasEma ? (ema.ema_rate + bandW_yellow + bandW_yellow) : 100;
+            var yChartMin = hasEma ? Math.max(0, ema.ema_rate - bandW_green) : 0;
+
+            var yMin = yChartMin, yMax = yChartMax;
+            // Punkty powyżej cap → rysuj na krawędzi (cap = yChartMax)
+            // yMin/yMax używamy bezpośrednio z obliczeń stref (skala pełna)
 
             // Faint horizontal grid lines
             ctx.strokeStyle=CC.grid; ctx.lineWidth=0.5;
@@ -1974,56 +2014,70 @@ const char* DASHBOARD_HTML = R"rawliteral(
             }
 
             if (hasEma) {
-                var yD=ema.yellow_sigma/100*ema.ema_dev;
-                var rD=ema.red_sigma/100*ema.ema_dev;
-                var yRt=yOf(ema.ema_rate+rD), yRb=yOf(Math.max(yMin,ema.ema_rate-rD));
-                var yYt=yOf(ema.ema_rate+yD), yYb=yOf(Math.max(yMin,ema.ema_rate-yD));
+                // Granice bandów w ml/h
+                var bGreenTop   = ema.ema_rate + bandW_green;
+                var bYellowTop  = ema.ema_rate + bandW_yellow + bandW_green;  // = ema + dYellow*ema
+                var bGreenBot   = ema.ema_rate - bandW_green;
 
-                ctx.fillStyle=CC.bandR;
-                ctx.fillRect(p.l, p.t,  cw, yRt-p.t);
-                ctx.fillRect(p.l, yRb,  cw, p.t+ch-yRb);
-                ctx.fillStyle=CC.bandY;
-                ctx.fillRect(p.l, yRt,  cw, yYt-yRt);
-                ctx.fillRect(p.l, yYb,  cw, yRb-yYb);
-                ctx.fillStyle=CC.bandG;
-                ctx.fillRect(p.l, yYt,  cw, yYb-yYt);
+                // Band czerwony (góra i dół symetrycznie)
+                ctx.fillStyle = CC.bandR;
+                ctx.fillRect(p.l, p.t, cw, yOf(bYellowTop) - p.t);  // powyżej żółtego
+                ctx.fillRect(p.l, yOf(Math.max(0, bGreenBot)), cw, p.t+ch - yOf(Math.max(0, bGreenBot)));  // poniżej zielonego
 
-                // Update legend with EMA values
+                // Band żółty
+                ctx.fillStyle = CC.bandY;
+                ctx.fillRect(p.l, yOf(bYellowTop), cw, yOf(bGreenTop) - yOf(bYellowTop));
+
+                // Band zielony (od bGreenBot do bGreenTop, EMA w środku)
+                ctx.fillStyle = CC.bandG;
+                ctx.fillRect(p.l, yOf(bGreenTop), cw, yOf(Math.max(0, bGreenBot)) - yOf(bGreenTop));
+
+                // Aktualizuj legendę
                 var elER = document.getElementById('legendEmaRate');
-                var elWB = document.getElementById('legendWarnBand');
-                var elAB = document.getElementById('legendAlarmBand');
                 if (elER) { elER.textContent = 'EMA ' + fmtV(ema.ema_rate) + ' ml/h'; elER.style.display = ''; }
-                if (elWB) { elWB.textContent = '± ' + fmtV(yD) + ' warn'; elWB.style.display = ''; }
-                if (elAB) { elAB.textContent = '± ' + fmtV(rD) + ' alarm'; elAB.style.display = ''; }
 
+                // EMA dashed line
                 var ye = yOf(ema.ema_rate);
                 ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
                 ctx.beginPath(); ctx.moveTo(p.l, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
                 ctx.setLineDash([]);
+
+                // Score badge w legendzie
+                var score = ema.alarm_score || 0;
+                var zoneName, zoneClr;
+                if (score >= ema.zone_yellow)      { zoneName='RED';    zoneClr='#f87171'; }
+                else if (score >= ema.zone_green)  { zoneName='YELLOW'; zoneClr='#fbbf24'; }
+                else                               { zoneName='GREEN';  zoneClr='#4ade80'; }
+                var badge = document.getElementById('scoreZoneBadge');
+                if (badge) {
+                    badge.textContent = 'Score: ' + score.toFixed(1) + ' \u25B2 ' + zoneName;
+                    badge.style.color = zoneClr;
+                    badge.style.display = '';
+                }
             } else {
-                // Brak dojrzałej EMA — ukryj legendę żeby nie pokazywała starych wartości
                 var elER = document.getElementById('legendEmaRate');
-                var elWB = document.getElementById('legendWarnBand');
-                var elAB = document.getElementById('legendAlarmBand');
                 if (elER) elER.style.display = 'none';
-                if (elWB) elWB.style.display = 'none';
-                if (elAB) elAB.style.display = 'none';
+                var badge = document.getElementById('scoreZoneBadge');
+                if (badge) badge.style.display = 'none';
             }
 
-            // Data line
+            // Data line (szara)
             ctx.strokeStyle='rgba(148,163,184,0.28)'; ctx.lineWidth=1.5;
             ctx.beginPath(); var first=true;
             for (var i=0; i<visPts.length; i++) {
                 if (visPts[i].rate_ml_h<=0) continue;
-                var x=xOf(visPts[i].ts), y=yOf(visPts[i].rate_ml_h);
+                var rawY = visPts[i].rate_ml_h;
+                var clampedY = Math.min(rawY, yMax);  // cap na górnej krawędzi
+                var x=xOf(visPts[i].ts), y=yOf(clampedY);
                 if (first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);
             }
             ctx.stroke();
 
-            // Data points
+            // Data points — szare
             for (var i=0; i<visPts.length; i++) {
                 if (visPts[i].rate_ml_h<=0) continue;
-                ctx.beginPath(); ctx.arc(xOf(visPts[i].ts),yOf(visPts[i].rate_ml_h),4,0,Math.PI*2);
+                var clampedY = Math.min(visPts[i].rate_ml_h, yMax);
+                ctx.beginPath(); ctx.arc(xOf(visPts[i].ts), yOf(clampedY), 4, 0, Math.PI*2);
                 ctx.fillStyle='rgba(100,116,139,0.85)'; ctx.fill();
             }
 
@@ -2124,14 +2178,106 @@ const char* DASHBOARD_HTML = R"rawliteral(
                     if (!data || !data.success) return;
                     var pts = (data.cycles || []).slice().reverse(); // oldest first
                     var ema = {
-                        ema_rate: data.ema_rate || 0, ema_dev: data.ema_dev || 0,
-                        bootstrap: data.bootstrap || 0,
-                        yellow_sigma: data.yellow_sigma || 150, red_sigma: data.red_sigma || 250
+                        ema_rate:    data.ema_rate    || 0,
+                        alarm_score: data.alarm_score || 0,
+                        bootstrap:   data.bootstrap   || 0,
+                        zone_green:  data.zone_green  || 20,
+                        zone_yellow: data.zone_yellow || 50,
+                        alarm_p1:    data.alarm_p1    || 0.10,
+                        ema_clamp:   data.ema_clamp   || 0.40
                     };
                     drawRateChart(pts, ema);
                 })
                 .catch(function(e) { console.error("Load cycles error:", e); })
                 .finally(function() { btn.disabled=false; btn.textContent="Load History"; });
+        }
+
+        // ============================================
+        // ALG SETTINGS FORM
+        // ============================================
+
+        var algSettingsOpen = false;
+
+        function toggleAlgSettings() {
+            var panel = document.getElementById('algSettingsPanel');
+            if (!panel) return;
+            algSettingsOpen = !algSettingsOpen;
+            panel.style.display = algSettingsOpen ? '' : 'none';
+            if (algSettingsOpen) {
+                secureFetch('api/alg-config')
+                    .then(function(r) { return r ? r.json() : null; })
+                    .then(function(d) {
+                        if (!d || !d.success) return;
+                        document.getElementById('algAlpha').value     = d.ema_alpha;
+                        document.getElementById('algClamp').value     = d.ema_clamp;
+                        document.getElementById('algP1').value        = d.alarm_p1;
+                        document.getElementById('algP2').value        = d.alarm_p2;
+                        document.getElementById('algZoneGreen').value = d.zone_green;
+                        document.getElementById('algZoneYellow').value= d.zone_yellow;
+                        document.getElementById('algInitEma').value   = d.initial_ema;
+                    })
+                    .catch(function(e) { console.error('alg-config GET error:', e); });
+            }
+        }
+
+        function saveAlgSettings() {
+            var errEl = document.getElementById('algSettingsError');
+            errEl.style.display = 'none';
+
+            var alpha   = parseFloat(document.getElementById('algAlpha').value);
+            var clamp   = parseFloat(document.getElementById('algClamp').value);
+            var p1      = parseFloat(document.getElementById('algP1').value);
+            var p2      = parseFloat(document.getElementById('algP2').value);
+            var zGreen  = parseFloat(document.getElementById('algZoneGreen').value);
+            var zYellow = parseFloat(document.getElementById('algZoneYellow').value);
+            var initEma = parseFloat(document.getElementById('algInitEma').value);
+
+            var err = '';
+            if (isNaN(alpha)   || alpha < 0.05 || alpha > 0.50)        err = 'EMA Alpha: 0.05–0.50';
+            else if (isNaN(clamp) || clamp < 0.10 || clamp > 0.80)     err = 'EMA Clamp: 0.10–0.80';
+            else if (isNaN(p1)  || p1 < 0.01 || p1 > 2.0)             err = 'P1: 0.01–2.0';
+            else if (isNaN(p2)  || p2 < 0.05 || p2 > 0.99)            err = 'P2: 0.05–0.99';
+            else if (isNaN(zGreen) || zGreen < 1 || zGreen > 200)      err = 'Zone Green: 1–200';
+            else if (isNaN(zYellow) || zYellow <= zGreen || zYellow > 500) err = 'Zone Yellow: must be > Zone Green and ≤ 500';
+            else if (isNaN(initEma) || initEma < 1 || initEma > 500)   err = 'Initial EMA: 1–500 ml/h';
+
+            if (err) {
+                errEl.textContent = err;
+                errEl.style.display = '';
+                return;
+            }
+
+            var btn = document.getElementById('algSaveBtn');
+            btn.disabled = true; btn.textContent = 'Saving...';
+
+            var body = 'ema_alpha='   + alpha   +
+                       '&ema_clamp='  + clamp   +
+                       '&alarm_p1='   + p1      +
+                       '&alarm_p2='   + p2      +
+                       '&zone_green=' + zGreen  +
+                       '&zone_yellow='+ zYellow +
+                       '&initial_ema='+ initEma;
+
+            secureFetch('api/alg-config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: body
+            })
+            .then(function(r) { return r ? r.json() : null; })
+            .then(function(d) {
+                if (d && d.success) {
+                    toggleAlgSettings();
+                    alert('Algorithm settings saved.');
+                } else {
+                    errEl.textContent = (d && d.error) ? d.error : 'Save failed';
+                    errEl.style.display = '';
+                }
+            })
+            .catch(function(e) {
+                errEl.textContent = 'Network error';
+                errEl.style.display = '';
+            })
+            .finally(function() { btn.disabled=false; btn.textContent='Save'; });
         }
 
         // ============================================

@@ -186,7 +186,23 @@ void handleStatus(AsyncWebServerRequest* request) {
     json["audio_volume"]            = audioPlayer.getVolume();
     json["mixing_pump_active"]      = isMixingPumpActive();
     json["peristaltic_pump_active"] = isPeristalticPumpRunning();
-    json["rtc_ts"]            = (uint32_t)getUnixTimestamp();
+    json["rtc_ts"]                  = (uint32_t)getUnixTimestamp();
+
+    // ============================================
+    // ALARM SCORE
+    // ============================================
+    {
+        const EmaBlock&    ema = waterAlgorithm.getEma();
+        const TopOffConfig& cfg = waterAlgorithm.getConfig();
+        json["alarm_score"]   = ema.alarm_score;
+        json["alarm_armed"]   = waterAlgorithm.isAlarmArmed();
+        uint8_t zone = 0;
+        if (ema.alarm_score >= cfg.zone_yellow)      zone = 2;
+        else if (ema.alarm_score >= cfg.zone_green)  zone = 1;
+        json["alarm_zone"]    = zone;  // 0=green 1=yellow 2=red
+        json["ema_rate"]      = ema.ema_rate_ml_h;
+        json["bootstrap"]     = ema.bootstrap_count;
+    }
     
     // ============================================
     // DEVICE INFO
@@ -583,14 +599,17 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
     doc["success"] = true;
     doc["total"]   = count;
 
-    // EMA context — needed by frontend charts
+    // EMA + alarm config context — needed by frontend chart
     const EmaBlock&    ema = waterAlgorithm.getEma();
     const TopOffConfig& cfg = waterAlgorithm.getConfig();
     doc["ema_rate"]     = ema.ema_rate_ml_h;
-    doc["ema_dev"]      = ema.ema_dev_ml_h;
+    doc["alarm_score"]  = ema.alarm_score;
     doc["bootstrap"]    = ema.bootstrap_count;
-    doc["yellow_sigma"] = cfg.rate_yellow_sigma;
-    doc["red_sigma"]    = cfg.rate_red_sigma;
+    doc["zone_green"]   = cfg.zone_green;
+    doc["zone_yellow"]  = cfg.zone_yellow;
+    doc["alarm_p1"]     = cfg.alarm_p1;
+    doc["alarm_p2"]     = cfg.alarm_p2;
+    doc["ema_clamp"]    = cfg.ema_clamp;
 
     JsonArray arr = doc["cycles"].to<JsonArray>();
 
@@ -874,6 +893,103 @@ void handleAudioVolume(AsyncWebServerRequest *request) {
 
         LOG_INFO("Audio volume set to %d via web interface", audioPlayer.getVolume());
     }
+}
+
+// ===============================
+// ALGORITHM CONFIG HANDLER
+// GET  — zwraca bieżące 7 parametrów algorytmu
+// POST — zapisuje nowe wartości (form-encoded)
+// ===============================
+
+void handleAlgConfig(AsyncWebServerRequest* request) {
+    if (!checkAuthentication(request)) {
+        request->send(401, "text/plain", "Unauthorized");
+        return;
+    }
+
+    if (request->method() == HTTP_GET) {
+        const TopOffConfig& cfg = waterAlgorithm.getConfig();
+        JsonDocument doc;
+        doc["success"]     = true;
+        doc["ema_alpha"]   = cfg.ema_alpha;
+        doc["ema_clamp"]   = cfg.ema_clamp;
+        doc["alarm_p1"]    = cfg.alarm_p1;
+        doc["alarm_p2"]    = cfg.alarm_p2;
+        doc["zone_green"]  = cfg.zone_green;
+        doc["zone_yellow"] = cfg.zone_yellow;
+        doc["initial_ema"] = cfg.initial_ema;
+        String resp; serializeJson(doc, resp);
+        request->send(200, "application/json", resp);
+        return;
+    }
+
+    // POST — walidacja i zapis
+    auto getF = [&](const char* name, float def) -> float {
+        return request->hasParam(name, true)
+            ? request->getParam(name, true)->value().toFloat()
+            : def;
+    };
+
+    const TopOffConfig& cur = waterAlgorithm.getConfig();
+    float alpha      = getF("ema_alpha",   cur.ema_alpha);
+    float clamp      = getF("ema_clamp",   cur.ema_clamp);
+    float p1         = getF("alarm_p1",    cur.alarm_p1);
+    float p2         = getF("alarm_p2",    cur.alarm_p2);
+    float zGreen     = getF("zone_green",  cur.zone_green);
+    float zYellow    = getF("zone_yellow", cur.zone_yellow);
+    float initEma    = getF("initial_ema", cur.initial_ema);
+
+    // Walidacja
+    if (alpha < 0.05f || alpha > 0.50f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"ema_alpha: 0.05–0.50\"}");
+        return;
+    }
+    if (clamp < 0.10f || clamp > 0.80f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"ema_clamp: 0.10–0.80\"}");
+        return;
+    }
+    if (p1 < 0.01f || p1 > 2.0f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"alarm_p1: 0.01–2.0\"}");
+        return;
+    }
+    if (p2 < 0.05f || p2 > 0.99f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"alarm_p2: 0.05–0.99\"}");
+        return;
+    }
+    if (zGreen < 1.0f || zGreen > 200.0f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"zone_green: 1.0–200.0\"}");
+        return;
+    }
+    if (zYellow <= zGreen || zYellow > 500.0f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"zone_yellow must be > zone_green and ≤ 500\"}");
+        return;
+    }
+    if (initEma < 1.0f || initEma > 500.0f) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"initial_ema: 1.0–500.0 ml/h\"}");
+        return;
+    }
+
+    TopOffConfig cfg = waterAlgorithm.getConfig();
+    cfg.ema_alpha   = alpha;
+    cfg.ema_clamp   = clamp;
+    cfg.alarm_p1    = p1;
+    cfg.alarm_p2    = p2;
+    cfg.zone_green  = zGreen;
+    cfg.zone_yellow = zYellow;
+    cfg.initial_ema = initEma;
+    waterAlgorithm.setConfig(cfg);
+
+    JsonDocument doc;
+    doc["success"]     = true;
+    doc["ema_alpha"]   = cfg.ema_alpha;
+    doc["ema_clamp"]   = cfg.ema_clamp;
+    doc["alarm_p1"]    = cfg.alarm_p1;
+    doc["alarm_p2"]    = cfg.alarm_p2;
+    doc["zone_green"]  = cfg.zone_green;
+    doc["zone_yellow"] = cfg.zone_yellow;
+    doc["initial_ema"] = cfg.initial_ema;
+    String resp; serializeJson(doc, resp);
+    request->send(200, "application/json", resp);
 }
 
 void handleAlarmToggle(AsyncWebServerRequest *request) {

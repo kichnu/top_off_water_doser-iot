@@ -11,22 +11,17 @@ import math
 #  CONFIGURATION — edit this block
 # ═══════════════════════════════════════════════════════════════════
 
-INITIAL_EMA = 100.0   # bootstrapped EMA value (ml/h)
-ALPHA       = 0.40    # EMA smoothing: 0.1=slow .. 0.5=fast
-CLAMP       = 0.40 # max allowed deviation per step: 0.20 = ±20%
+INITIAL_EMA = 20.0   # bootstrapped EMA value (ml/h)
+ALPHA       = 0.50    # EMA smoothing: 0.1=slow .. 0.5=fast
+CLAMP       = 0.40    # max allowed deviation per step: 0.20 = ±20%
 
 # Alarm score zone thresholds
 ZONE_GREEN  = 20.0    # score < GREEN  → green
 ZONE_YELLOW = 50.0    # GREEN ≤ score < YELLOW → yellow, else red
 
-# Alarm parameters (spike — rate > EMA)
+# Alarm parameters
 P1 = 0.1   # magnitude weight: how strongly a single spike contributes
-P2 = 0.50  # decay speed: larger = score drops faster when rate returns to EMA
-
-# Drop parameters (rate < EMA — yellow-only warning, never red)
-P3 = 0.08  # drop magnitude weight (slightly less sensitive than spikes)
-P4 = 0.5  # drop decay: smaller = sticky (drop alarm lasts longer)
-DROP_YELLOW = 15.0  # drop_score threshold for yellow warning
+P2 = 0.80   # decay speed: larger = score drops faster when rate returns to EMA
 
 # ───────────────────────────────────────────────────────────────────
 #  FLOW_RATE SEQUENCE — pick one scenario or define your own
@@ -34,9 +29,9 @@ DROP_YELLOW = 15.0  # drop_score threshold for yellow warning
 #
 # SCENARIO_A: stable operation (~100 ml/h with small natural variation)
 SCENARIO_A = [
-    20, 28, 22, 27, 23, 29, 2, 23, 22,
-    30, 29,  22, 33, 3, 33, 34, 34, 39,
-30, 29,  22, 33, 3, 33, 34, 1400, 100, 190, 100, 100, 100, 100, 190, 100, 100,
+    20, 28, 22, 27, 2, 2, 2, 23, 22,
+    30, 29,  22, 33, 30, 33, 34, 34, 39,
+    30, 29,  22, 33, 30, 33, 34, 140, 100, 190, 100, 100, 500, 300, 390, 100, 100,
     40, 48, 46, 45, 49, 52, 54, 55, 66, 65, 66,
     75, 77, 78, 220,280, 91, 99, 100, 101, 99, 100,
 ]
@@ -85,41 +80,35 @@ FLOW_RATES = SCENARIO_A
 # ═══════════════════════════════════════════════════════════════════
 
 
-def zone(score: float, drop_score: float) -> tuple[str, str, str]:
-    """Returns (label, color_code, symbol). Red only from spike_score; drop gives yellow."""
-    if score >= ZONE_YELLOW:
-        return "RED",    "\033[31m", "■"
-    if score >= ZONE_GREEN or drop_score >= DROP_YELLOW:
+def zone(score: float) -> tuple[str, str, str]:
+    """Returns (label, color_code, symbol)."""
+    RESET = "\033[0m"
+    if score < ZONE_GREEN:
+        return "GREEN",  "\033[32m", "●"
+    if score < ZONE_YELLOW:
         return "YELLOW", "\033[33m", "▲"
-    return              "GREEN",  "\033[32m", "●"
+    return              "RED",    "\033[31m", "■"
 
 
-def simulate(rates, initial_ema, alpha, clamp, p1, p2, p3, p4):
-    ema        = initial_ema
-    score      = 0.0   # spike score (drives green/yellow/red)
-    drop_score = 0.0   # drop score  (drives yellow only)
-    rows       = []
+def simulate(rates, initial_ema, alpha, clamp, p1, p2):
+    ema   = initial_ema
+    score = 0.0
+    rows  = []
 
     for i, rate in enumerate(rates):
         if i == 0:
-            rows.append((i, rate, rate, ema, score, drop_score))
+            rows.append((i, rate, rate, ema, score))
             continue
 
         # 1. Alarm uses EMA from PREVIOUS step
         d = (rate - ema) / ema if ema > 0 else 0.0
         if d > 0:
-            # Spike: accumulate spike score, decay drop score
-            instant    = p1 * 100.0 * math.log2(1.0 + d)
-            decay      = p2 / (1.0 + d)
-            score      = score * (1.0 - decay) + instant
-            drop_score = max(0.0, drop_score * (1.0 - min(1.0, p4 * (1.0 + d))))
+            instant = p1 * 100.0 * math.log2(1.0 + d)
+            decay   = p2 / (1.0 + d)
+            score   = score * (1.0 - decay) + instant
         else:
-            # Drop: decay spike score, accumulate drop score
-            factor     = min(1.0, p2 * (1.0 + abs(d)))
-            score      = max(0.0, score * (1.0 - factor))
-            d_instant  = p3 * 100.0 * math.log2(1.0 + abs(d))
-            d_decay    = p4 / (1.0 + abs(d))
-            drop_score = drop_score * (1.0 - d_decay) + d_instant
+            factor = min(1.0, p2 * (1.0 + abs(d)))
+            score  = max(0.0, score * (1.0 - factor))
 
         # 2. Update EMA with clamped rate
         lo      = ema * (1.0 - clamp)
@@ -127,32 +116,31 @@ def simulate(rates, initial_ema, alpha, clamp, p1, p2, p3, p4):
         clamped = min(max(rate, lo), hi)
         ema     = ema + alpha * (clamped - ema)
 
-        rows.append((i, rate, clamped, ema, score, drop_score))
+        rows.append((i, rate, clamped, ema, score))
 
     return rows
 
 
-def print_table(rows, initial_ema, alpha, clamp, p1, p2, p3, p4):
+def print_table(rows, initial_ema, alpha, clamp, p1, p2):
     RESET = "\033[0m"
     # ── header ──
-    print(f"\n{'═'*80}")
+    print(f"\n{'═'*72}")
     print(f"  EMA₀={initial_ema}  α={alpha}  clamp±{clamp*100:.0f}%  "
-          f"p1={p1}  p2={p2}  p3={p3}  p4={p4}  drop_yellow={DROP_YELLOW}")
-    print(f"  zones: GREEN<{ZONE_GREEN}  YELLOW<{ZONE_YELLOW}  RED≥{ZONE_YELLOW}  "
-          f"(drop_score≥{DROP_YELLOW} → yellow only)")
-    print(f"{'═'*80}")
-    print(f"  {'#':>4}  {'rate':>7}  {'clamped':>8}  {'EMA':>8}  {'score':>8}  {'drop':>8}  zone")
-    print(f"  {'-'*70}")
+          f"p1={p1}  p2={p2}  "
+          f"zones: GREEN<{ZONE_GREEN}  YELLOW<{ZONE_YELLOW}  RED≥{ZONE_YELLOW}")
+    print(f"{'═'*72}")
+    print(f"  {'#':>4}  {'rate':>7}  {'clamped':>8}  {'EMA':>8}  {'score':>8}  zone")
+    print(f"  {'-'*62}")
 
-    for step, rate, clamped, ema, score, drop_score in rows:
-        label, clr, sym = zone(score, drop_score)
+    for step, rate, clamped, ema, score in rows:
+        label, clr, sym = zone(score)
         clamped_str = f"{clamped:>8.1f}" if clamped != rate else "        ="
         print(f"{clr}  {step:>4}  {rate:>7.1f}  {clamped_str}  "
-              f"{ema:>8.2f}  {score:>8.2f}  {drop_score:>8.2f}  {sym} {label}{RESET}")
+              f"{ema:>8.2f}  {score:>8.2f}  {sym} {label}{RESET}")
 
-    print(f"{'═'*80}\n")
+    print(f"{'═'*72}\n")
 
 
 if __name__ == "__main__":
-    rows = simulate(FLOW_RATES, INITIAL_EMA, ALPHA, CLAMP, P1, P2, P3, P4)
-    print_table(rows, INITIAL_EMA, ALPHA, CLAMP, P1, P2, P3, P4)
+    rows = simulate(FLOW_RATES, INITIAL_EMA, ALPHA, CLAMP, P1, P2)
+    print_table(rows, INITIAL_EMA, ALPHA, CLAMP, P1, P2)

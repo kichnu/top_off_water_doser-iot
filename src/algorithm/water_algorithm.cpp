@@ -7,6 +7,7 @@
 #include "../hardware/fram_controller.h"
 #include "../config/config.h"
 #include "algorithm_config.h"
+#include <math.h>
 #include <time.h>
 
 WaterAlgorithm waterAlgorithm;
@@ -27,17 +28,22 @@ WaterAlgorithm::WaterAlgorithm() {
     config.dose_ml           = DEFAULT_DOSE_ML;
     config.daily_limit_ml    = DEFAULT_DAILY_LIMIT_ML;
     config.ema_alpha         = DEFAULT_EMA_ALPHA;
-    config.rate_yellow_sigma = DEFAULT_RATE_YELLOW_SIGMA;
-    config.rate_red_sigma    = DEFAULT_RATE_RED_SIGMA;
+    config.ema_clamp         = DEFAULT_EMA_CLAMP;
+    config.alarm_p1          = DEFAULT_ALARM_P1;
+    config.alarm_p2          = DEFAULT_ALARM_P2;
+    config.zone_green        = DEFAULT_ZONE_GREEN;
+    config.zone_yellow       = DEFAULT_ZONE_YELLOW;
+    config.initial_ema       = DEFAULT_INITIAL_EMA;
     config.history_window_s  = DEFAULT_HISTORY_WINDOW_S;
     config.is_configured     = 0x00;
 
     ema.ema_rate_ml_h  = 0.0f;
     ema.ema_interval_s = 0.0f;
-    ema.ema_dev_ml_h   = 0.0f;
+    ema.alarm_score    = 0.0f;
     ema.bootstrap_count = 0;
 
-    lastError = ERROR_NONE;
+    alarmArmed = true;
+    lastError  = ERROR_NONE;
 
     lowReservoirCount = 0;
 
@@ -54,12 +60,10 @@ WaterAlgorithm::WaterAlgorithm() {
 // initFromFRAM — wywołaj z setup() po initFRAM()
 // ============================================================
 void WaterAlgorithm::initFromFRAM() {
-    // Sprawdź config — od jego ważności zależy czy dane FRAM są kompatybilne
     TopOffConfig framCfg;
     bool configValid = loadTopOffConfigFromFRAM(framCfg) &&
                        framCfg.is_configured == TOPOFF_CONFIG_MAGIC;
 
-    // Sprawdź czy ring buffer nie zawiera danych legacy (count > 60 = korupcja)
     if (!isTopOffRingBufferValid()) {
         LOG_WARNING("WaterAlgorithm: ring buffer count out of range — clearing FRAM data");
         framBusy = true;
@@ -71,8 +75,13 @@ void WaterAlgorithm::initFromFRAM() {
         config = framCfg;
         LOG_INFO("WaterAlgorithm: config loaded from FRAM");
 
-        // Config OK → wczytaj EMA i historię
         loadEmaFromFRAM();
+
+        // Seed EMA z initial_ema jeśli brak danych historycznych
+        if (ema.ema_rate_ml_h < 0.01f && config.initial_ema > 0.01f) {
+            ema.ema_rate_ml_h = config.initial_ema;
+            LOG_INFO("WaterAlgorithm: EMA seeded from initial_ema=%.2f", config.initial_ema);
+        }
 
         TopOffRecord lastRecord;
         if (loadLastTopOffRecord(lastRecord)) {
@@ -85,14 +94,16 @@ void WaterAlgorithm::initFromFRAM() {
         rolling24hVolumeMl = scanRolling24h();
 
     } else {
-        // Config niekompatybilny (nowy format 0xA6) → reset FRAM danych
-        // Stare rekordy i EMA z poprzedniego formatu są bezużyteczne
         LOG_WARNING("WaterAlgorithm: FRAM config outdated or absent — hard reset");
         LOG_WARNING("  Clearing ring buffer and EMA (FRAM format change)");
         framBusy = true;
         clearTopOffRingBuffer();
         framBusy = false;
-        // config, ema, totalCycleCount — zostają przy defaults/zerach z konstruktora
+
+        // Seed EMA z default initial_ema
+        if (config.initial_ema > 0.01f) {
+            ema.ema_rate_ml_h = config.initial_ema;
+        }
     }
 
     LOG_INFO("====================================");
@@ -100,27 +111,33 @@ void WaterAlgorithm::initFromFRAM() {
     LOG_INFO("  dose_ml        : %d ml", config.dose_ml);
     LOG_INFO("  daily_limit_ml : %d ml", config.daily_limit_ml);
     LOG_INFO("  ema_alpha      : %.2f", config.ema_alpha);
-    LOG_INFO("  bootstrap_count: %d/%d", ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
+    LOG_INFO("  ema_clamp      : %.2f", config.ema_clamp);
+    LOG_INFO("  alarm_p1       : %.3f", config.alarm_p1);
+    LOG_INFO("  alarm_p2       : %.3f", config.alarm_p2);
+    LOG_INFO("  zone_green     : %.1f", config.zone_green);
+    LOG_INFO("  zone_yellow    : %.1f", config.zone_yellow);
+    LOG_INFO("  initial_ema    : %.2f", config.initial_ema);
+    LOG_INFO("  bootstrap_count: %d", ema.bootstrap_count);
     LOG_INFO("  ema_rate       : %.2f ml/h", ema.ema_rate_ml_h);
-    LOG_INFO("  ema_dev        : %.2f ml/h", ema.ema_dev_ml_h);
+    LOG_INFO("  alarm_score    : %.2f", ema.alarm_score);
     LOG_INFO("  rolling_24h    : %d ml", rolling24hVolumeMl);
     LOG_INFO("  next_cycle_num : %d", totalCycleCount);
     LOG_INFO("====================================");
 }
 
 // ============================================================
-// FRAM — ładowanie i zapis konfiguracji (pomocnicze)
+// FRAM — ładowanie i zapis
 // ============================================================
 void WaterAlgorithm::loadConfigFromFRAM() {
-    // Pusta — logika przeniesiona do initFromFRAM() dla spójności resetu
+    // Logika przeniesiona do initFromFRAM()
 }
 
 void WaterAlgorithm::loadEmaFromFRAM() {
     EmaBlock framEma;
     if (loadEmaBlockFromFRAM(framEma)) {
         ema = framEma;
-        LOG_INFO("WaterAlgorithm: EMA loaded — bootstrap=%d rate=%.2f dev=%.2f",
-                 ema.bootstrap_count, ema.ema_rate_ml_h, ema.ema_dev_ml_h);
+        LOG_INFO("WaterAlgorithm: EMA loaded — bootstrap=%d rate=%.2f score=%.2f",
+                 ema.bootstrap_count, ema.ema_rate_ml_h, ema.alarm_score);
     } else {
         LOG_INFO("WaterAlgorithm: EMA absent in FRAM — starting from zero");
     }
@@ -157,12 +174,9 @@ void WaterAlgorithm::update() {
             break;
 
         case STATE_DEBOUNCING:
-            // Obsługiwane przez water_sensors.cpp — callback onDebounceComplete()
             break;
 
         case STATE_PUMPING:
-            // Pompa pracuje stały czas — pump_controller zatrzyma ją automatycznie.
-            // Gdy isPumpActive() == false, cykl jest zakończony.
             if (!isPumpActive()) {
                 finishPumpCycle();
             }
@@ -178,11 +192,9 @@ void WaterAlgorithm::update() {
             break;
 
         case STATE_ERROR:
-            // Oczekiwanie na reset — obsługiwane przez checkResetButton()
             break;
 
         case STATE_MANUAL_OVERRIDE:
-            // Obsługiwane przez pump_controller — callback onManualPumpComplete()
             break;
     }
 }
@@ -202,12 +214,12 @@ void WaterAlgorithm::onDebounceComplete() {
     if (currentState != STATE_DEBOUNCING) return;
     resetSensorProcess();
     checkAvailableWaterSensor();
-    if (currentState == STATE_ERROR) return;  // alarm krytyczny — nie startuj pompy
+    if (currentState == STATE_ERROR) return;
     startAutoPump();
 }
 
 // ============================================================
-// CZUJNIK DOSTĘPNOŚCI WODY — sprawdzenie po debouncing
+// CZUJNIK DOSTĘPNOŚCI WODY
 // ============================================================
 
 void WaterAlgorithm::checkAvailableWaterSensor() {
@@ -240,7 +252,7 @@ void WaterAlgorithm::onDebounceReset() {
 }
 
 // ============================================================
-// PUMP CONTROL — stała dawka
+// PUMP CONTROL
 // ============================================================
 
 void WaterAlgorithm::startAutoPump() {
@@ -252,7 +264,6 @@ void WaterAlgorithm::startAutoPump() {
         return;
     }
 
-    // Pre-check: jeśli limit jest już przekroczony PRZED dolewką — nie pompuj
     rolling24hVolumeMl = scanRolling24h();
     if (rolling24hVolumeMl >= config.daily_limit_ml) {
         LOG_WARNING("DAILY LIMIT PRE-CHECK: %d >= %d ml — dose skipped → ERROR",
@@ -267,24 +278,12 @@ void WaterAlgorithm::startAutoPump() {
     LOG_INFO("====================================");
     LOG_INFO("AUTO PUMP START");
     LOG_INFO("  dose_ml      : %d ml", config.dose_ml);
-    LOG_INFO("  flow_rate    : %.2f ml/s (current)", currentPumpSettings.volumePerSecond);
+    LOG_INFO("  flow_rate    : %.2f ml/s", currentPumpSettings.volumePerSecond);
     LOG_INFO("  dose_time    : %d s", doseTimeS);
     LOG_INFO("  rolling_24h  : %d / %d ml", rolling24hVolumeMl, config.daily_limit_ml);
-
-    if (ema.bootstrap_count >= DEFAULT_MIN_BOOTSTRAP && ema.ema_dev_ml_h > 0.01f) {
-        float yDev = config.rate_yellow_sigma / 100.0f * ema.ema_dev_ml_h;
-        float rDev = config.rate_red_sigma    / 100.0f * ema.ema_dev_ml_h;
-        LOG_INFO("  EMA rate     : %.1f ml/h", ema.ema_rate_ml_h);
-        LOG_INFO("  warn range   : [%.1f – %.1f] ml/h (±%.1f%%σ)",
-                 ema.ema_rate_ml_h - yDev, ema.ema_rate_ml_h + yDev,
-                 (float)config.rate_yellow_sigma);
-        LOG_INFO("  err  range   : [%.1f – %.1f] ml/h (±%.1f%%σ)",
-                 ema.ema_rate_ml_h - rDev, ema.ema_rate_ml_h + rDev,
-                 (float)config.rate_red_sigma);
-    } else {
-        LOG_INFO("  EMA rate     : %.1f ml/h (bootstrap %d/%d)",
-                 ema.ema_rate_ml_h, ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP);
-    }
+    LOG_INFO("  ema_rate     : %.1f ml/h", ema.ema_rate_ml_h);
+    LOG_INFO("  alarm_score  : %.2f (green<%.1f yellow<%.1f)",
+             ema.alarm_score, config.zone_green, config.zone_yellow);
     LOG_INFO("====================================");
 
     pumpStartMs = millis();
@@ -295,23 +294,20 @@ void WaterAlgorithm::startAutoPump() {
 }
 
 // ============================================================
-// FINALIZACJA CYKLU — wywoływana gdy pompa skończyła pracę
+// FINALIZACJA CYKLU
 // ============================================================
 
 void WaterAlgorithm::finishPumpCycle() {
-    // Timestamp i godzina lokalna
     uint32_t nowTs = getUnixTimestamp();
     time_t   t     = (time_t)nowTs;
     struct tm tmLocal;
     localtime_r(&t, &tmLocal);
     uint8_t hourOfDay = (uint8_t)tmLocal.tm_hour;
 
-    // Interwał od poprzedniej dolewki
     uint32_t intervalS = (lastTopOffTimestamp > 0 && nowTs > lastTopOffTimestamp)
                          ? (nowTs - lastTopOffTimestamp) : 0;
     lastTopOffTimestamp = nowTs;
 
-    // Rate [ml/h] — sensowne dopiero od 2. zdarzenia
     float rateMlH = (intervalS > 0)
                     ? ((float)config.dose_ml / intervalS * 3600.0f)
                     : 0.0f;
@@ -325,51 +321,47 @@ void WaterAlgorithm::finishPumpCycle() {
     LOG_INFO("  hour      : %d", hourOfDay);
     LOG_INFO("====================================");
 
-    // Aktualizuj EMA (od 2. zdarzenia gdy rate jest znane)
     if (intervalS > 0) {
         updateEMA(intervalS, rateMlH);
     } else {
-        // Pierwsze zdarzenie — inicjuj EMA_interval, rate pozostaje 0
         ema.ema_interval_s = 0.0f;
         if (ema.bootstrap_count < 255) ema.bootstrap_count++;
     }
 
-    // Odchylenie w sigma i poziom alertu
-    int8_t  devRateSigma = calculateDevSigma(rateMlH);
-    uint8_t alertLevel   = calculateAlertLevel(devRateSigma);
+    // Re-arm: jeśli score wróciło do żółtej lub zielonej strefy
+    if (!alarmArmed && ema.alarm_score < config.zone_yellow) {
+        alarmArmed = true;
+        LOG_INFO("ALARM re-armed (score=%.2f < zone_yellow=%.2f)", ema.alarm_score, config.zone_yellow);
+    }
 
-    bool redAlertHit = (alertLevel == 2 && ema.bootstrap_count > DEFAULT_MIN_BOOTSTRAP);
+    uint8_t alertLevel = calculateAlertLevel();
+    bool redAlertHit   = (alertLevel == 2) && alarmArmed;
 
-    // Buduj rekord — flagi dobowego limitu ustawiamy po zapisie
     TopOffRecord record;
     record.timestamp      = nowTs;
     record.interval_s     = intervalS;
     record.rate_ml_h      = rateMlH;
     record.cycle_num      = totalCycleCount++;
-    record.dev_rate_sigma = devRateSigma;
+    record.dev_rate_sigma = 0;  // nieużywane
     record.alert_level    = alertLevel;
     record.hour_of_day    = hourOfDay;
     record.flags          = 0;
-    record.dose_ml_record = config.dose_ml;  // store actual dose so rolling24h survives dose_ml changes
-    if (ema.bootstrap_count <= DEFAULT_MIN_BOOTSTRAP) record.flags |= TopOffRecord::FLAG_BOOTSTRAP;
-    if (redAlertHit)                                  record.flags |= TopOffRecord::FLAG_RED_ALERT;
+    record.dose_ml_record = config.dose_ml;
+    if (redAlertHit) record.flags |= TopOffRecord::FLAG_RED_ALERT;
 
-    // Zapisz do FRAM — od teraz bieżący cykl jest w ring buffer
     framBusy = true;
     saveTopOffRecord(record);
     saveEmaToFRAM();
     framBusy = false;
 
-    // Skanuj rolling_24h po zapisie — bieżący cykl uwzględniony
     rolling24hVolumeMl = scanRolling24h();
 
     bool dailyLimitHit = (rolling24hVolumeMl >= config.daily_limit_ml);
 
-    LOG_INFO("METRICS: dev_sigma=%d alert=%d bootstrap=%d/%d rolling=%d/%d ml",
-             devRateSigma, alertLevel, ema.bootstrap_count, DEFAULT_MIN_BOOTSTRAP,
+    LOG_INFO("METRICS: score=%.2f alert=%d armed=%d rolling=%d/%d ml",
+             ema.alarm_score, alertLevel, (int)alarmArmed,
              rolling24hVolumeMl, config.daily_limit_ml);
 
-    // Obsługa błędów — po zapisaniu wszystkich danych
     if (dailyLimitHit) {
         LOG_WARNING("DAILY LIMIT: %d ml >= %d ml — entering ERROR state",
                     rolling24hVolumeMl, config.daily_limit_ml);
@@ -378,71 +370,79 @@ void WaterAlgorithm::finishPumpCycle() {
     }
 
     if (redAlertHit) {
-        LOG_WARNING("RED ALERT: rate anomaly detected — entering ERROR state");
+        LOG_WARNING("RED ALERT: alarm_score=%.2f >= zone_yellow=%.2f — entering ERROR state",
+                    ema.alarm_score, config.zone_yellow);
         startErrorSignal(ERROR_RED_ALERT);
         return;
     }
 
-    // Normalny przebieg — LOGGING
     currentState = STATE_LOGGING;
     stateStartMs = millis();
     cycleLogged  = true;
 }
 
 // ============================================================
-// EMA — obliczenia
+// EMA + ALARM SCORE
 // ============================================================
 
 void WaterAlgorithm::updateEMA(uint32_t intervalS, float rateMlH) {
     float alpha = config.ema_alpha;
+    float clamp = config.ema_clamp;
+    float p1    = config.alarm_p1;
+    float p2    = config.alarm_p2;
 
-    if (ema.bootstrap_count == 0) {
-        // Pierwsze zdarzenie z rate — inicjuj EMA bezpośrednio
+    // Seed EMA przy pierwszej dolewce z rate
+    if (ema.ema_rate_ml_h < 0.01f) {
         ema.ema_rate_ml_h  = rateMlH;
         ema.ema_interval_s = (float)intervalS;
-        ema.ema_dev_ml_h   = 0.0f;  // Brak danych o odchyleniu jeszcze
-    } else {
-        float dev = fabsf(rateMlH - ema.ema_rate_ml_h);
-        ema.ema_rate_ml_h  = alpha * rateMlH   + (1.0f - alpha) * ema.ema_rate_ml_h;
-        ema.ema_interval_s = alpha * intervalS  + (1.0f - alpha) * ema.ema_interval_s;
-        ema.ema_dev_ml_h   = alpha * dev        + (1.0f - alpha) * ema.ema_dev_ml_h;
+        if (ema.bootstrap_count < 255) ema.bootstrap_count++;
+        LOG_INFO("EMA: seeded from first rate=%.2f", rateMlH);
+        return;
     }
+
+    // Odchylenie względne
+    float d = (ema.ema_rate_ml_h > 0.01f)
+              ? ((rateMlH - ema.ema_rate_ml_h) / ema.ema_rate_ml_h)
+              : 0.0f;
+
+    // Alarm score
+    if (d > 0.0f) {
+        float instant = p1 * 100.0f * log2f(1.0f + d);
+        float decay   = p2 / (1.0f + d);
+        ema.alarm_score = ema.alarm_score * (1.0f - decay) + instant;
+    } else {
+        float factor = fminf(1.0f, p2 * (1.0f + fabsf(d)));
+        ema.alarm_score = fmaxf(0.0f, ema.alarm_score * (1.0f - factor));
+    }
+
+    // Clamp rate przed aktualizacją EMA
+    float lo      = ema.ema_rate_ml_h * (1.0f - clamp);
+    float hi      = ema.ema_rate_ml_h * (1.0f + clamp);
+    float clamped = fminf(fmaxf(rateMlH, lo), hi);
+
+    ema.ema_rate_ml_h  = alpha * clamped    + (1.0f - alpha) * ema.ema_rate_ml_h;
+    ema.ema_interval_s = alpha * intervalS  + (1.0f - alpha) * ema.ema_interval_s;
 
     if (ema.bootstrap_count < 255) ema.bootstrap_count++;
 
-    LOG_INFO("EMA: rate=%.2f ml/h dev=%.2f ml/h int=%.0fs (bootstrap=%d)",
-             ema.ema_rate_ml_h, ema.ema_dev_ml_h, ema.ema_interval_s,
-             ema.bootstrap_count);
+    LOG_INFO("EMA: rate=%.2f ml/h (clamped=%.2f) score=%.2f d=%.3f bootstrap=%d",
+             ema.ema_rate_ml_h, clamped, ema.alarm_score, d, ema.bootstrap_count);
 }
 
-int8_t WaterAlgorithm::calculateDevSigma(float rateMlH) const {
-    // Brak danych lub bootstrap — nie liczymy odchyleń
-    if (ema.bootstrap_count < DEFAULT_MIN_BOOTSTRAP) return 0;
-    if (ema.ema_dev_ml_h < 0.01f) return 0;
-
-    float sigma = (rateMlH - ema.ema_rate_ml_h) / ema.ema_dev_ml_h * 100.0f;
-    return clampSigma(sigma);
-}
-
-uint8_t WaterAlgorithm::calculateAlertLevel(int8_t devRateSigma) const {
-    if (ema.bootstrap_count < DEFAULT_MIN_BOOTSTRAP) return 0;
-
-    int absSigma = devRateSigma < 0 ? -devRateSigma : devRateSigma;
-
-    if (absSigma >= (int)config.rate_red_sigma)    return 2;
-    if (absSigma >= (int)config.rate_yellow_sigma)  return 1;
+uint8_t WaterAlgorithm::calculateAlertLevel() const {
+    if (ema.alarm_score >= config.zone_yellow) return 2;
+    if (ema.alarm_score >= config.zone_green)  return 1;
     return 0;
 }
 
 // ============================================================
-// Rolling 24h — skanuje ring buffer FRAM
+// Rolling 24h
 // ============================================================
 
 uint16_t WaterAlgorithm::scanRolling24h() const {
     uint32_t nowTs    = getUnixTimestamp();
     uint32_t windowS  = config.history_window_s;
     uint32_t cutoffTs = (nowTs > windowS) ? (nowTs - windowS) : 0;
-    // manual reset: use more recent of 24h window or manual reset timestamp
     if (manualResetTs > cutoffTs) cutoffTs = manualResetTs;
 
     uint16_t total = 0;
@@ -452,7 +452,6 @@ uint16_t WaterAlgorithm::scanRolling24h() const {
     uint16_t inWindow = 0;
     for (uint16_t i = 0; i < count; i++) {
         if (records[i].timestamp >= cutoffTs) {
-            // Use per-record dose if available (new records); fall back to config for old records
             uint16_t d = (records[i].dose_ml_record > 0) ? records[i].dose_ml_record : config.dose_ml;
             total += d;
             inWindow++;
@@ -477,9 +476,11 @@ void WaterAlgorithm::setConfig(const TopOffConfig& cfg) {
     saveTopOffConfigToFRAM(config);
     framBusy = false;
 
-    LOG_INFO("Config updated: dose=%d ml, daily_limit=%d ml, alpha=%.2f, y_sigma=%d, r_sigma=%d",
-             config.dose_ml, config.daily_limit_ml, config.ema_alpha,
-             config.rate_yellow_sigma, config.rate_red_sigma);
+    LOG_INFO("Config updated: dose=%d ml, daily_limit=%d ml, alpha=%.2f, clamp=%.2f",
+             config.dose_ml, config.daily_limit_ml, config.ema_alpha, config.ema_clamp);
+    LOG_INFO("  p1=%.3f p2=%.3f zone_green=%.1f zone_yellow=%.1f initial_ema=%.2f",
+             config.alarm_p1, config.alarm_p2, config.zone_green, config.zone_yellow,
+             config.initial_ema);
 }
 
 // ============================================================
@@ -496,15 +497,12 @@ void WaterAlgorithm::handleSystemDisable() {
     }
 
     if (currentState == STATE_MANUAL_OVERRIDE) {
-        // Manual pump is allowed in Service Mode — do not interrupt
         if (!systemWasDisabled) systemWasDisabled = true;
         return;
     }
 
     if (currentState == STATE_ERROR || currentState == STATE_LOGGING) {
-        if (!systemWasDisabled) {
-            systemWasDisabled = true;
-        }
+        if (!systemWasDisabled) systemWasDisabled = true;
         return;
     }
 
@@ -522,8 +520,7 @@ void WaterAlgorithm::handleSystemDisable() {
 }
 
 // ============================================================
-// ERROR SIGNAL (GPIO ERROR_SIGNAL_PIN)
-// Wszystkie błędy → STATE_ERROR, wymaga resetu
+// ERROR SIGNAL
 // ============================================================
 
 void WaterAlgorithm::startErrorSignal(ErrorCode error) {
@@ -591,13 +588,14 @@ void WaterAlgorithm::resetFromError() {
     lastError    = ERROR_NONE;
     currentState = STATE_IDLE;
     stateStartMs = millis();
+    alarmArmed   = false;  // wymagany re-arm przez żółtą/zieloną strefę
     resetSensorProcess();
-    LOG_INFO("Error cleared — returned to IDLE");
+    LOG_INFO("Error cleared — returned to IDLE, alarmArmed=false");
 }
 
 bool WaterAlgorithm::resetSystem() {
     if (currentState == STATE_LOGGING) return false;
-    if (currentState == STATE_MANUAL_OVERRIDE) return false;  // nie przerywaj ręcznej pompy
+    if (currentState == STATE_MANUAL_OVERRIDE) return false;
 
     if (isPumpActive()) stopPump();
 
@@ -610,14 +608,19 @@ bool WaterAlgorithm::resetSystem() {
 }
 
 bool WaterAlgorithm::resetCycleHistory() {
-    if (isInCycle()) return false;  // Nie kasuj danych gdy cykl w toku
+    if (isInCycle()) return false;
 
     framBusy = true;
-    bool ok = clearTopOffRingBuffer();  // Czyści FRAM: count, wptr, EMA checksum
+    bool ok = clearTopOffRingBuffer();
     framBusy = false;
 
-    // Reset in-memory EMA — inaczej algorytm liczyłby alerty na starych danych
     ema = EmaBlock{};
+    // Seed EMA z initial_ema po kasowaniu historii
+    if (config.initial_ema > 0.01f) {
+        ema.ema_rate_ml_h = config.initial_ema;
+        LOG_INFO("WaterAlgorithm: EMA re-seeded to initial_ema=%.2f after history clear",
+                 config.initial_ema);
+    }
     lastTopOffTimestamp = 0;
     rolling24hVolumeMl  = 0;
 
@@ -627,7 +630,7 @@ bool WaterAlgorithm::resetCycleHistory() {
 
 void WaterAlgorithm::resetRolling24h() {
     manualResetTs      = getUnixTimestamp();
-    rolling24hVolumeMl = scanRolling24h();  // = 0 (all records now before cutoff)
+    rolling24hVolumeMl = scanRolling24h();
     LOG_INFO("Rolling 24h manually reset — manualResetTs=%lu rolling=%d ml",
              manualResetTs, rolling24hVolumeMl);
 }

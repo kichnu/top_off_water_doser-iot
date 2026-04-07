@@ -81,15 +81,15 @@ struct PumpCycle {
 // 🆕 TOP-OFF ALGORITHM SECTIONS
 // ===============================
 
-// Konfiguracja algorytmu (TopOffConfig) — 20 bajtów
-// UWAGA: sizeof(TopOffConfig) == 20 (verified by static_assert)
-//        Checksum MUSI być na adresie >= FRAM_ADDR_TOPOFF_CONFIG + 20 = 0x0574
-#define FRAM_ADDR_TOPOFF_CONFIG     0x0560   // 20 bytes — TopOffConfig struct (0x0560–0x0573)
-#define FRAM_ADDR_TOPOFF_CFG_CHKSUM 0x0574   // 2 bytes — checksum konfiguracji (po strukturze!)
+// Konfiguracja algorytmu (TopOffConfig) — 40 bajtów
+// UWAGA: sizeof(TopOffConfig) == 40 (verified by static_assert)
+//        Checksum MUSI być na adresie >= FRAM_ADDR_TOPOFF_CONFIG + 40 = 0x0588
+#define FRAM_ADDR_TOPOFF_CONFIG     0x0560   // 40 bytes — TopOffConfig struct (0x0560–0x0587)
+#define FRAM_ADDR_TOPOFF_CFG_CHKSUM 0x0588   // 2 bytes — checksum konfiguracji
 
 // Blok EMA (EmaBlock) — 16 bajtów
-#define FRAM_ADDR_EMA_BLOCK         0x0580   // 16 bytes — EmaBlock struct (0x0580–0x058F)
-#define FRAM_ADDR_EMA_CHKSUM        0x0590   // 2 bytes — checksum EMA
+#define FRAM_ADDR_EMA_BLOCK         0x0590   // 16 bytes — EmaBlock struct (0x0590–0x059F)
+#define FRAM_ADDR_EMA_CHKSUM        0x05A0   // 2 bytes — checksum EMA
 
 // Ring buffer rekordów dolewek (TopOffRecord, 20 bajtów każdy)
 #define TOPOFF_HISTORY_SIZE         60       // Maksymalnie 60 rekordów (60×20=1200 bajtów)
@@ -99,8 +99,9 @@ struct PumpCycle {
 #define FRAM_ADDR_TOPOFF_DATA       0x0610   // Start danych: 60 × 20 = 1200 bajtów → kończy się 0x0AC0
 
 // Kalkwasser Scheduler config (20 bytes + 2 checksum)
-#define FRAM_ADDR_KALKWASSER_CFG    0x0AC0   // 20 bytes — KalkwasserConfig struct
-#define FRAM_ADDR_KALKWASSER_CHKSUM 0x0AD4   // 2 bytes  — checksum
+// Przeniesione przed ring buffer — ring buffer jest ostatnim blokiem w FRAM
+#define FRAM_ADDR_KALKWASSER_CFG    0x05B0   // 20 bytes — KalkwasserConfig struct (0x05B0–0x05C3)
+#define FRAM_ADDR_KALKWASSER_CHKSUM 0x05C4   // 2 bytes  — checksum
 
 // Konfiguracja Kalkwasser (zapisywana w FRAM)
 struct KalkwasserConfig {

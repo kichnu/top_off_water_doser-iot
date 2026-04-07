@@ -342,22 +342,6 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                     <span class="error">Must be 0.05 – 0.50</span>
                 </div>
 
-                <div class="form-group">
-                    <label for="yellow_sigma">Warning Threshold (%&#963;)</label>
-                    <input type="number" id="yellow_sigma" name="yellow_sigma"
-                           value="150" min="50" max="500" step="10">
-                    <small>Warn when rate deviates N% beyond typical variation. Default: 150</small>
-                    <span class="error">Must be 50 – 500</span>
-                </div>
-
-                <div class="form-group">
-                    <label for="red_sigma">Error Threshold (%&#963;)</label>
-                    <input type="number" id="red_sigma" name="red_sigma"
-                           value="250" min="100" max="1000" step="10">
-                    <small>Stop + alarm at N%. Must exceed warning threshold. Default: 250</small>
-                    <span class="error">Must be 100 – 1000 and greater than warning threshold</span>
-                </div>
-
                 <button type="submit" class="btn" id="submitBtn">
                     <span id="submitBtnText">Save Configuration</span>
                     <span class="spinner hidden" id="submitSpinner"></span>
@@ -499,9 +483,7 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 const r = await fetch('/api/prov/config');
                 const d = await r.json();
                 if (d.device_name) document.getElementById('device_name').value = d.device_name;
-                document.getElementById('ema_alpha').value    = d.ema_alpha    ?? 0.20;
-                document.getElementById('yellow_sigma').value = d.yellow_sigma ?? 150;
-                document.getElementById('red_sigma').value    = d.red_sigma    ?? 250;
+                document.getElementById('ema_alpha').value = d.ema_alpha ?? 0.20;
 
                 if (!d.is_configured) {
                     // First-time setup — passwords required
@@ -535,9 +517,7 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 wifi_ssid:     document.getElementById('wifi_ssid').value,
                 wifi_password: document.getElementById('wifi_password').value,
                 admin_password:document.getElementById('admin_password').value,
-                ema_alpha:     parseFloat(document.getElementById('ema_alpha').value),
-                yellow_sigma:  parseInt(document.getElementById('yellow_sigma').value),
-                red_sigma:     parseInt(document.getElementById('red_sigma').value)
+                ema_alpha:     parseFloat(document.getElementById('ema_alpha').value)
             };
 
             // Validate
@@ -583,18 +563,6 @@ const char SETUP_PAGE_HTML[] PROGMEM = R"rawliteral(
                 hasErrors = true;
             }
 
-            // Yellow sigma
-            if (isNaN(formData.yellow_sigma) || formData.yellow_sigma < 50 || formData.yellow_sigma > 500) {
-                document.getElementById('yellow_sigma').parentElement.classList.add('has-error');
-                hasErrors = true;
-            }
-
-            // Red sigma
-            if (isNaN(formData.red_sigma) || formData.red_sigma < 100 || formData.red_sigma > 1000 || formData.red_sigma <= formData.yellow_sigma) {
-                document.getElementById('red_sigma').parentElement.classList.add('has-error');
-                hasErrors = true;
-            }
-            
             if (hasErrors) {
                 showAlert('Validation Error', 'Please fix the errors in the form.', 'warn');
                 return;

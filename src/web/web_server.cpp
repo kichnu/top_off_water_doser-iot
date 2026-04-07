@@ -59,6 +59,9 @@ void initWebServer() {
     server.on("/api/alarm-toggle", HTTP_GET | HTTP_POST, handleAlarmToggle);
     server.on("/api/audio-volume", HTTP_GET | HTTP_POST, handleAudioVolume);
 
+    // Algorithm config (EMA alpha/clamp, P1/P2, zone thresholds, initial EMA)
+    server.on("/api/alg-config", HTTP_GET | HTTP_POST, handleAlgConfig);
+
     // Health check endpoint (no session required)
     server.on("/api/health", HTTP_GET, handleHealth);
 
