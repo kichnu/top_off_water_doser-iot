@@ -557,8 +557,8 @@ void handleSetDose(AsyncWebServerRequest* request) {
 
     int value = request->getParam("value", true)->value().toInt();
 
-    if (value < 50 || value > 2000) {
-        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 50-2000 ml\"}");
+    if (value < 1 || value > 2000) {
+        request->send(400, "application/json", "{\"success\":false,\"error\":\"Value must be 1-2000 ml\"}");
         return;
     }
 

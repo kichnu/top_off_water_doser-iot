@@ -1,0 +1,2 @@
+kalkwasser kalibracja - po naciśnięcu ma być na zielono plus odliczanie czasu plus ON a przed naciśnięciem ma byc tekst 'Calibration OFF' na szaro
+podczas 'Auto mode OFF kalibracja kalkwassera się nie zatrzymuje

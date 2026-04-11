@@ -105,3 +105,8 @@ Monitoruje poziom wody w zbiorniku RO/uzupełniającej. Ostrzeżenia narastają 
 - Konfiguracja EMA, historia cykli i ustawienia są zapisane w FRAM (nieulotna pamięć, przeżywa wyłączenie zasilania)
 - Stan kalkwassera (ON/OFF) przeżywa restart, resetuje się tylko ręcznie przez panel
 - Po każdym restarcie: 15 min Service Mode → automatyczny powrót do Auto Mode
+
+
+
+python docs/fetch_sim.py --host 192.168.10.2 --password PYd6mX8qofnhvGyVPsSqEun8Oybj0B9M
+
