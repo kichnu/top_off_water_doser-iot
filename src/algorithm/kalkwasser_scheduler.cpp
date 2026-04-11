@@ -55,10 +55,46 @@ void KalkwasserScheduler::init() {
 // ============================================================
 
 void KalkwasserScheduler::update() {
-    // System-wide disable: stop scheduled operations; allow manual direct control
+    updatePeristalticPump();   // drive auto-stop timer — must run in all modes
+
+    uint32_t nowMs = millis();
+
+    // ── Manual / override states — handled first, independent of service mode ──
+    // KALK_CALIBRATING, KALK_DIRECT_MIX, KALK_DIRECT_DOSE must time-out even when
+    // the system is in Service mode; without this the pump runs indefinitely because
+    // the early return below would skip the switch.
+    switch (state) {
+        case KALK_CALIBRATING:
+            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_CALIBRATION_S * 1000UL)) {
+                stopPeristalticPump();
+                state = KALK_IDLE;
+                LOG_INFO("KalkwasserScheduler: calibration run complete (30s) → IDLE");
+            }
+            return;
+
+        case KALK_DIRECT_MIX:
+            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_MIX_TIMEOUT_S * 1000UL)) {
+                stopMixingPump();
+                state = KALK_IDLE;
+                LOG_WARNING("KalkwasserScheduler: mixing pump DIRECT timeout → IDLE");
+            }
+            return;
+
+        case KALK_DIRECT_DOSE:
+            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_DOSE_TIMEOUT_S * 1000UL)) {
+                stopPeristalticPump();
+                state = KALK_IDLE;
+                LOG_WARNING("KalkwasserScheduler: peristaltic pump DIRECT timeout → IDLE");
+            }
+            return;
+
+        default:
+            break;
+    }
+
+    // ── Service mode: stop scheduled operations and bail out ──
     if (isSystemDisabled()) {
-        if (state != KALK_IDLE && state != KALK_CALIBRATING &&
-            state != KALK_DIRECT_MIX && state != KALK_DIRECT_DOSE) {
+        if (state != KALK_IDLE) {
             stopPeristalticPump();
             stopMixingPump();
             state = KALK_IDLE;
@@ -67,14 +103,10 @@ void KalkwasserScheduler::update() {
         return;
     }
 
-    updatePeristalticPump();   // drive auto-stop timer
-
     uint32_t nowTs = (uint32_t)getUnixTimestamp();
     checkDayRollover(nowTs);   // always run — clears done_bits even when disabled
 
     if (!enabled) return;
-
-    uint32_t nowMs = millis();
 
     switch (state) {
 
@@ -169,28 +201,7 @@ void KalkwasserScheduler::update() {
             }
             break;
 
-        case KALK_CALIBRATING:
-            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_CALIBRATION_S * 1000UL)) {
-                stopPeristalticPump();
-                state = KALK_IDLE;
-                LOG_INFO("KalkwasserScheduler: calibration run complete (30s) → IDLE");
-            }
-            break;
-
-        case KALK_DIRECT_MIX:
-            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_MIX_TIMEOUT_S * 1000UL)) {
-                stopMixingPump();
-                state = KALK_IDLE;
-                LOG_WARNING("KalkwasserScheduler: mixing pump DIRECT timeout → IDLE");
-            }
-            break;
-
-        case KALK_DIRECT_DOSE:
-            if ((nowMs - stateStartMs) >= (uint32_t)(KALK_DIRECT_DOSE_TIMEOUT_S * 1000UL)) {
-                stopPeristalticPump();
-                state = KALK_IDLE;
-                LOG_WARNING("KalkwasserScheduler: peristaltic pump DIRECT timeout → IDLE");
-            }
+        default:
             break;
     }
 }
