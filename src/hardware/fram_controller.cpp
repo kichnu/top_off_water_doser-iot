@@ -800,7 +800,7 @@ bool loadFillWaterMaxFromFRAM(uint16_t& fillWaterMax) {
 }
 
 // ================================================================
-// 🆕 TOP-OFF RECORD — ring buffer (60 × 18 bajtów)
+// 🆕 TOP-OFF RECORD — ring buffer (60 × 20 bajtów)
 // ================================================================
 
 static_assert(sizeof(TopOffRecord) == FRAM_TOPOFF_RECORD_SIZE,

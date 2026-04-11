@@ -445,23 +445,33 @@ uint16_t WaterAlgorithm::scanRolling24h() const {
     uint32_t cutoffTs = (nowTs > windowS) ? (nowTs - windowS) : 0;
     if (manualResetTs > cutoffTs) cutoffTs = manualResetTs;
 
-    uint16_t total = 0;
+    uint32_t total = 0;   // uint32_t — chroni przed przepełnieniem uint16_t przy błędnych rekordach
     TopOffRecord records[TOPOFF_HISTORY_SIZE];
     uint16_t count = loadTopOffHistory(records, TOPOFF_HISTORY_SIZE);
 
     uint16_t inWindow = 0;
     for (uint16_t i = 0; i < count; i++) {
         if (records[i].timestamp >= cutoffTs) {
-            uint16_t d = (records[i].dose_ml_record > 0) ? records[i].dose_ml_record : config.dose_ml;
+            // Walidacja dose_ml_record: musi być w sensownym zakresie.
+            // Stare rekordy (sprzed 02cefe4) miały tu _pad[2] — losowe bajty stosu.
+            uint16_t d;
+            if (records[i].dose_ml_record >= 50 && records[i].dose_ml_record <= 5000) {
+                d = records[i].dose_ml_record;
+            } else {
+                d = config.dose_ml;   // fallback: 0 lub śmieć → użyj aktualnej konfiguracji
+            }
             total += d;
             inWindow++;
         }
     }
 
-    LOG_INFO("scanRolling24h: nowTs=%lu cutoff=%lu total=%d records, %d in window → %d ml",
-             nowTs, cutoffTs, count, inWindow, total);
+    // Ogranicz do uint16_t — w razie masowej korupcji FRAM nie zwróci absurdalnej liczby
+    uint16_t result = (total > 65000u) ? 65000u : (uint16_t)total;
 
-    return total;
+    LOG_INFO("scanRolling24h: nowTs=%lu cutoff=%lu total=%d records, %d in window → %u ml",
+             nowTs, cutoffTs, count, inWindow, result);
+
+    return result;
 }
 
 // ============================================================
@@ -576,8 +586,21 @@ void WaterAlgorithm::onManualPumpComplete() {
 }
 
 void WaterAlgorithm::addManualVolume(uint16_t volumeMl) {
-    rolling24hVolumeMl += volumeMl;
-    LOG_INFO("Manual volume added: %d ml (rolling 24h: %d ml)", volumeMl, rolling24hVolumeMl);
+    // Odśwież bazę z FRAM (auto cykle), dodaj ręczne ml ponad to.
+    // Bez tego dodajemy do stale cache'u który może być już nadmuchany przez poprzednie addManualVolume.
+    uint16_t fromFram = scanRolling24h();
+    rolling24hVolumeMl = (uint32_t)fromFram + volumeMl > 65000u
+                         ? 65000u
+                         : (uint16_t)(fromFram + volumeMl);
+
+    LOG_INFO("Manual volume added: %d ml (FRAM=%d ml + manual=%d ml = rolling24h: %d ml)",
+             volumeMl, fromFram, volumeMl, rolling24hVolumeMl);
+
+    if (rolling24hVolumeMl >= config.daily_limit_ml) {
+        LOG_WARNING("Manual pump pushed 24h total over limit: %d >= %d ml → ERROR",
+                    rolling24hVolumeMl, config.daily_limit_ml);
+        startErrorSignal(ERROR_DAILY_LIMIT);
+    }
 }
 
 // ============================================================
@@ -610,12 +633,7 @@ bool WaterAlgorithm::resetSystem() {
 bool WaterAlgorithm::resetCycleHistory() {
     if (isInCycle()) return false;
 
-    framBusy = true;
-    bool ok = clearTopOffRingBuffer();
-    framBusy = false;
-
     ema = EmaBlock{};
-    // Seed EMA z initial_ema po kasowaniu historii
     if (config.initial_ema > 0.01f) {
         ema.ema_rate_ml_h = config.initial_ema;
         LOG_INFO("WaterAlgorithm: EMA re-seeded to initial_ema=%.2f after history clear",
@@ -623,6 +641,13 @@ bool WaterAlgorithm::resetCycleHistory() {
     }
     lastTopOffTimestamp = 0;
     rolling24hVolumeMl  = 0;
+    alarmArmed          = true;
+    totalCycleCount     = 0;
+
+    framBusy = true;
+    bool ok = clearTopOffRingBuffer();
+    if (ok) saveEmaToFRAM();  // persist reset EMA — without this, restart restores old EMA
+    framBusy = false;
 
     LOG_INFO("WaterAlgorithm: cycle history and EMA reset");
     return ok;
