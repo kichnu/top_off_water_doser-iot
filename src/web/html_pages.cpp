@@ -972,7 +972,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <div class="stat-column stat-col-dose">
                     <h3>Single Dose - Current Value</h3>
                     <div class="input-group" style="margin-top: 8px;">
-                        <input type="number" id="doseInput" min="50" max="2000" step="10" placeholder="ml">
+                        <input type="number" id="doseInput" min="1" max="2000" step="1" placeholder="ml">
                     </div>
                     <div class="stat-daily">
                         <button class="btn btn-secondary btn-small" onclick="setDose()">Set</button>
@@ -1091,7 +1091,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             <div class="card-subheader">Kalkwasser Pump Calibration</div>
             <div class="settings-row">
                 <div class="setting-item">
-                    <button id="kalkCalibBtn" class="btn btn-secondary" onclick="startKalkCalibration()">Start Calibration (30s)</button>
+                    <button id="kalkCalibBtn" class="btn btn-off" onclick="toggleKalkCalibration()">Calibration OFF</button>
                 </div>
                 <div class="setting-item input-group">
                     <label for="kalkMeasuredMl" style="text-align: center;">Mililiters per 30 Seconds)</label>
@@ -1852,7 +1852,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
         function setDose() {
             const input = document.getElementById("doseInput");
             const value = parseInt(input.value);
-            if (isNaN(value) || value < 50 || value > 2000) return;
+            if (isNaN(value) || value < 1 || value > 2000) return;
             if (!confirm("Set single dose to " + value + " ml?")) return;
 
             secureFetch("api/set-dose", {
@@ -2333,23 +2333,46 @@ const char* DASHBOARD_HTML = R"rawliteral(
             });
         }
 
-        function startKalkCalibration() {
+        var kalkCalibActive    = false;
+        var kalkCalibTimer     = null;
+        var kalkCalibRemaining = 0;
+
+        function updateKalkCalibBtn(isOn) {
             var btn = document.getElementById('kalkCalibBtn');
-            btn.disabled = true; btn.textContent = 'Running 30s...';
+            if (!btn) return;
+            btn.textContent = isOn ? ('Calibration ON ' + kalkCalibRemaining + 's') : 'Calibration OFF';
+            btn.className   = 'btn ' + (isOn ? 'btn-primary' : 'btn-off');
+        }
+
+        function toggleKalkCalibration() {
+            if (kalkCalibActive) return;
+            var btn = document.getElementById('kalkCalibBtn');
+            btn.disabled = true;
             secureFetch('api/kalkwasser-calibrate', { method: 'POST' })
                 .then(function(r) { return r ? r.json() : null; })
                 .then(function(data) {
                     if (data && data.success) {
-                        btn.textContent = 'Done! Measure now.';
+                        kalkCalibActive    = true;
+                        kalkCalibRemaining = data.duration_s || 30;
+                        btn.disabled = false;
+                        updateKalkCalibBtn(true);
+                        kalkCalibTimer = setInterval(function() {
+                            kalkCalibRemaining--;
+                            if (kalkCalibRemaining <= 0) {
+                                clearInterval(kalkCalibTimer);
+                                kalkCalibTimer  = null;
+                                kalkCalibActive = false;
+                                updateKalkCalibBtn(false);
+                            } else {
+                                updateKalkCalibBtn(true);
+                            }
+                        }, 1000);
                     } else {
                         alert('Calibration failed: ' + (data && data.error ? data.error : 'pump busy'));
-                        btn.disabled = false; btn.textContent = 'Start Calibration (30s)';
+                        btn.disabled = false;
                     }
                 })
-                .catch(function() { btn.disabled = false; btn.textContent = 'Start Calibration (30s)'; });
-            setTimeout(function() {
-                btn.disabled = false; btn.textContent = 'Start Calibration (30s)';
-            }, 35000);
+                .catch(function() { btn.disabled = false; });
         }
 
         function saveKalkFlowRate() {
