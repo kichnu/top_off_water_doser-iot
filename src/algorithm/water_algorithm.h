@@ -8,7 +8,7 @@
 // WaterAlgorithm — maszyna stanów sterująca pompą top-off.
 //
 // Stany: IDLE → DEBOUNCING → PUMPING → LOGGING → IDLE
-//                                     ↘ STATE_ERROR (limit dobowy / czerwony alert)
+//                                     ↘ STATE_ERROR (daily limit / red alert)
 //
 // Algorytm alarmu (score-based):
 //   Każda dolewka liczy odchylenie d = (rate - EMA) / EMA.
@@ -111,11 +111,6 @@ public:
 
     // ---- Alarm hystereza ----
     bool isAlarmArmed() const { return alarmArmed; }
-
-    // ---- Interfejs ręczny ----
-    bool requestManualPump(uint16_t durationMs);
-    void onManualPumpComplete();
-    void addManualVolume(uint16_t volumeMl);
 
     // ---- Reset / odzyskiwanie ----
     void resetFromError();

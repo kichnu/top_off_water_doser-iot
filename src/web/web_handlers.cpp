@@ -625,9 +625,6 @@ void handleGetCycleHistory(AsyncWebServerRequest* request) {
         obj["alert"]        = r.alert_level;
         obj["hour"]         = r.hour_of_day;
         obj["cycle"]        = r.cycle_num;
-        obj["manual"]       = (bool)(r.flags & TopOffRecord::FLAG_MANUAL);
-        obj["bootstrap"]    = (bool)(r.flags & TopOffRecord::FLAG_BOOTSTRAP);
-        obj["daily_lim"]    = (bool)(r.flags & TopOffRecord::FLAG_DAILY_LIM);
         obj["red_alert"]    = (bool)(r.flags & TopOffRecord::FLAG_RED_ALERT);
     }
 

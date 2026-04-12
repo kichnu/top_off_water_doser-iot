@@ -50,8 +50,7 @@ enum AlgorithmState {
     STATE_DEBOUNCING,
     STATE_PUMPING,
     STATE_LOGGING,
-    STATE_ERROR,
-    STATE_MANUAL_OVERRIDE
+    STATE_ERROR
 };
 
 // ============================================================
@@ -80,9 +79,6 @@ struct TopOffRecord {
     uint8_t  flags;           // Bitmaska flag (patrz poniżej)
     uint16_t dose_ml_record;  // Dawka [ml] dla tego cyklu
 
-    static const uint8_t FLAG_MANUAL    = 0x01;
-    static const uint8_t FLAG_BOOTSTRAP = 0x02;
-    static const uint8_t FLAG_DAILY_LIM = 0x04;
     static const uint8_t FLAG_RED_ALERT = 0x08;
 };
 static_assert(sizeof(TopOffRecord) == 20, "TopOffRecord must be exactly 20 bytes");

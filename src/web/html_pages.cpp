@@ -744,37 +744,16 @@ const char* DASHBOARD_HTML = R"rawliteral(
         .chart-wrap { margin-top: 12px; }
         .chart-sublabel:first-child { margin-top: 0; }
         .chart-rate-scroll {
-            overflow-x: hidden;
             width: 100%;
             border-radius: 6px;
+            overflow: hidden;
         }
         #chartRate {
             width: 100%;
             height: 190px;
             display: block;
             background: #1e293b;
-            /* width overridden by JS after data load */
         }
-        .chart-scroll-btns {
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-            margin-top: 8px;
-        }
-        .chart-scroll-btn {
-            background: rgba(148,163,184,0.08);
-            border: 1px solid rgba(148,163,184,0.18);
-            color: #94a3b8;
-            border-radius: 10px;
-            padding: 10px 0;
-            font-size: 1.1rem;
-            width: 80px;
-            min-height: 44px;
-            cursor: pointer;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .chart-scroll-btn:active { background: rgba(148,163,184,0.18); }
         .chart-legend {
             display: flex;
             flex-wrap: wrap;
@@ -984,7 +963,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             
         </div>
 
-        <!-- ATO & KALKWASSER PROCESS MONITOR CARD -->
+        <!-- ATO PROCESS MONITOR CARD -->
         <div class="card">
             <div class="card-header">
                 <div class="card-header-icon" style="background: rgba(129, 140, 248, 0.15);">
@@ -1013,15 +992,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <div id="chartRateScroll" class="chart-rate-scroll">
                     <canvas id="chartRate"></canvas>
                 </div>
-                <div class="chart-scroll-btns">
-                    <button class="chart-scroll-btn" id="chartScrollLeft">&#9664;</button>
-                    <button class="chart-scroll-btn" id="chartScrollRight">&#9654;</button>
-                </div>
                 <div class="chart-legend" style="align-items:center;">
-                    <span><span style="background:#4ade8022;border:1px solid #4ade8055;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Normal</span>
-                    <span><span style="background:#fbbf2422;border:1px solid #fbbf2455;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Warning</span>
-                    <span><span style="background:#f8717122;border:1px solid #f8717155;display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle;"></span> Alarm</span>
                     <span><span style="color:#94a3b8;font-weight:bold;">&#8212;</span> EMA</span>
+                    <span style="color:#f97316;font-weight:bold;">&#9650;</span><span style="color:var(--text-muted);"> clipped</span>
                     <span id="legendEmaRate" style="color:var(--text-secondary);border-left:1px solid var(--border);padding-left:10px;display:none;"></span>
                     <span id="scoreZoneBadge" style="display:none;padding-left:10px;font-weight:600;border-left:1px solid var(--border);"></span>
                     <button onclick="toggleAlgSettings()" id="algSettingsBtn"
@@ -1052,6 +1025,9 @@ const char* DASHBOARD_HTML = R"rawliteral(
                         <label style="font-size:0.72rem;color:var(--text-muted);">Initial EMA ml/h (1–500)
                             <input type="number" id="algInitEma" min="1" max="500" step="1"
                                 style="width:100%;margin-top:3px;"></label>
+                        <label style="font-size:0.72rem;color:var(--text-muted);">Chart Y-Max ml/h (blank=auto)
+                            <input type="number" id="algChartYMax" min="10" max="5000" step="10"
+                                placeholder="auto" style="width:100%;margin-top:3px;"></label>
                     </div>
                     <div id="algSettingsError" style="display:none;color:#f87171;font-size:0.72rem;margin-top:8px;"></div>
                     <div style="display:flex;gap:8px;margin-top:10px;">
@@ -1951,203 +1927,128 @@ const char* DASHBOARD_HTML = R"rawliteral(
             }
         }
 
+        var CHART_Y_MAX_FACTOR = 3;   // auto Y-max = ema_rate * CHART_Y_MAX_FACTOR
+        var chartYMaxOverride = null; // null = auto; set by user in algSettingsPanel (RAM only)
+
         function drawRateChart(pts, ema) {
-            var VIEW_HOURS = 6;
-            var MAX_SPAN_S = 5 * 86400;
-            var scrollEl = document.getElementById('chartRateScroll');
-            var viewW = scrollEl.offsetWidth;
-            var pxPerHour = viewW / VIEW_HOURS;
-
-            // Determine time range: min 6h, max 5 days, anchored to newest point
-            var maxTs = pts.length ? pts[pts.length-1].ts : Math.floor(Date.now()/1000);
-            var minTs = pts.length ? pts[0].ts : maxTs - VIEW_HOURS * 3600;
-            var spanS = maxTs - minTs;
-            if (spanS < VIEW_HOURS * 3600) { minTs = maxTs - VIEW_HOURS * 3600; spanS = VIEW_HOURS * 3600; }
-            if (spanS > MAX_SPAN_S)        { minTs = maxTs - MAX_SPAN_S;        spanS = MAX_SPAN_S; }
-
-            var canvasW = Math.round(pxPerHour * spanS / 3600);
-            var H = 190;
-            var cv = document.getElementById('chartRate');
-            cv.style.width = canvasW + 'px';
-            cv.style.height = H + 'px';
+            var RING_SIZE = 60;
+            var cv  = document.getElementById('chartRate');
+            var H   = 190;
             var dpr = window.devicePixelRatio || 1;
-            cv.width = Math.round(canvasW * dpr); cv.height = Math.round(H * dpr);
+            var W   = cv.parentElement.offsetWidth || 300;
+            cv.style.width  = W + 'px';
+            cv.style.height = H + 'px';
+            cv.width  = Math.round(W * dpr);
+            cv.height = Math.round(H * dpr);
             var ctx = cv.getContext('2d');
             ctx.scale(dpr, dpr);
-            var W = canvasW;
 
-            var p = {t:14, r:8, b:44, l:8};  // b=44: 2-row axis (HH:MM + DD.MM)
-            var cw = W-p.l-p.r, ch = H-p.t-p.b;
-            ctx.fillStyle = CC.bg; ctx.fillRect(0,0,W,H);
+            var p  = {t:10, r:6, b:10, l:6};
+            var cw = W - p.l - p.r;
+            var ch = H - p.t - p.b;
 
-            var tsRange = spanS;
-            function xOf(ts) { return p.l + (ts - minTs) / tsRange * cw; }
-            function yOf(v)  { return p.t + (1-(v-yMin)/(yMax-yMin)) * ch; }
+            // Background
+            ctx.fillStyle = CC.bg;
+            ctx.fillRect(0, 0, W, H);
 
-            // Only points within the visible window
-            var visPts = pts.filter(function(c) { return c.ts >= minTs; });
-
-            var rates = visPts.filter(function(c){return c.rate_ml_h>0;}).map(function(c){return c.rate_ml_h;});
+            // Y-max: user override or auto (ema_rate * factor, fallback 300)
             var hasEma = ema.ema_rate > 0.01;
+            var autoYMax = hasEma ? ema.ema_rate * CHART_Y_MAX_FACTOR : 300;
+            var yMax = (chartYMaxOverride !== null && chartYMaxOverride > 0)
+                       ? chartYMaxOverride : autoYMax;
 
-            // Oblicz granice stref na podstawie score → d → ml/h
-            // dGreen  = 2^(zone_green  / (p1*100)) - 1
-            // dYellow = 2^(zone_yellow / (p1*100)) - 1
-            // Szer. czerwonego bandu = szer. żółtego (symetria)
-            var dGreen  = hasEma ? (Math.pow(2, ema.zone_green  / (ema.alarm_p1 * 100)) - 1) : 0;
-            var dYellow = hasEma ? (Math.pow(2, ema.zone_yellow / (ema.alarm_p1 * 100)) - 1) : 0;
-            var bandW_green  = ema.ema_rate * dGreen;
-            var bandW_yellow = ema.ema_rate * (dYellow - dGreen);
-            // Górna granica wykresu: EMA + yellow + red (= yellow)
-            var yChartMax = hasEma ? (ema.ema_rate + bandW_yellow + bandW_yellow) : 100;
-            var yChartMin = hasEma ? Math.max(0, ema.ema_rate - bandW_green) : 0;
+            function yOf(v) { return p.t + (1 - Math.min(v, yMax) / yMax) * ch; }
 
-            var yMin = yChartMin, yMax = yChartMax;
-            // Punkty powyżej cap → rysuj na krawędzi (cap = yChartMax)
-            // yMin/yMax używamy bezpośrednio z obliczeń stref (skala pełna)
-
-            // Faint horizontal grid lines
-            ctx.strokeStyle=CC.grid; ctx.lineWidth=0.5;
-            for (var gi=0; gi<=4; gi++){
-                var gy=p.t+ch*gi/4;
-                ctx.beginPath(); ctx.moveTo(p.l,gy); ctx.lineTo(p.l+cw,gy); ctx.stroke();
+            // Grid lines — 4 horizontal
+            ctx.strokeStyle = CC.grid;
+            ctx.lineWidth = 0.5;
+            for (var gi = 1; gi <= 4; gi++) {
+                var gy = p.t + ch * (1 - gi / 4);
+                ctx.beginPath(); ctx.moveTo(p.l, gy); ctx.lineTo(p.l + cw, gy); ctx.stroke();
             }
 
+            if (!pts.length) {
+                ctx.fillStyle = CC.txt; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('No data yet', W / 2, H / 2);
+                return;
+            }
+
+            // Bar geometry: RING_SIZE slots, oldest left → newest right
+            var slotW   = cw / RING_SIZE;
+            var gapPx   = Math.max(1, slotW * 0.18);
+            var barW    = Math.max(1, slotW - gapPx);
+            var offset  = RING_SIZE - pts.length; // empty slots on the left
+
+            // Bar colours — two alternating steel-blue tones
+            var barClrA = 'rgba(79,140,190,0.88)';
+            var barClrB = 'rgba(56,108,152,0.88)';
+            var dotClr  = '#cbd5e1';
+            var flareClr = '#f97316';  // orange for clipped bars
+
+            for (var i = 0; i < pts.length; i++) {
+                var slot  = offset + i;
+                var rate  = pts[i].rate_ml_h || 0;
+                if (rate <= 0) continue;
+
+                var clipped = rate >= yMax;
+                var barH    = clipped ? ch : Math.max(2, (rate / yMax) * ch);
+                var bx      = p.l + slot * slotW + gapPx / 2;
+                var by      = p.t + ch - barH;
+
+                // Bar body
+                ctx.fillStyle = (slot % 2 === 0) ? barClrA : barClrB;
+                ctx.fillRect(bx, by, barW, barH);
+
+                if (clipped) {
+                    // Flare: bright orange cap + white centre dot
+                    ctx.fillStyle = flareClr;
+                    ctx.fillRect(bx, p.t, barW, 4);
+                    ctx.beginPath();
+                    ctx.arc(bx + barW / 2, p.t + 2, 2.5, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.fill();
+                } else {
+                    // Normal tip dot
+                    ctx.beginPath();
+                    ctx.arc(bx + barW / 2, by, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = dotClr;
+                    ctx.fill();
+                }
+            }
+
+            // EMA dashed line
             if (hasEma) {
-                // Granice bandów w ml/h
-                var bGreenTop   = ema.ema_rate + bandW_green;
-                var bYellowTop  = ema.ema_rate + bandW_yellow + bandW_green;  // = ema + dYellow*ema
-                var bGreenBot   = ema.ema_rate - bandW_green;
-
-                // Band czerwony (góra i dół symetrycznie)
-                ctx.fillStyle = CC.bandR;
-                ctx.fillRect(p.l, p.t, cw, yOf(bYellowTop) - p.t);  // powyżej żółtego
-                ctx.fillRect(p.l, yOf(Math.max(0, bGreenBot)), cw, p.t+ch - yOf(Math.max(0, bGreenBot)));  // poniżej zielonego
-
-                // Band żółty
-                ctx.fillStyle = CC.bandY;
-                ctx.fillRect(p.l, yOf(bYellowTop), cw, yOf(bGreenTop) - yOf(bYellowTop));
-
-                // Band zielony (od bGreenBot do bGreenTop, EMA w środku)
-                ctx.fillStyle = CC.bandG;
-                ctx.fillRect(p.l, yOf(bGreenTop), cw, yOf(Math.max(0, bGreenBot)) - yOf(bGreenTop));
-
-                // Aktualizuj legendę
-                var elER = document.getElementById('legendEmaRate');
-                if (elER) { elER.textContent = 'EMA ' + fmtV(ema.ema_rate) + ' ml/h'; elER.style.display = ''; }
-
-                // EMA dashed line
                 var ye = yOf(ema.ema_rate);
-                ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
-                ctx.beginPath(); ctx.moveTo(p.l, ye); ctx.lineTo(p.l+cw, ye); ctx.stroke();
+                ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1.5;
+                ctx.setLineDash([6, 4]);
+                ctx.beginPath(); ctx.moveTo(p.l, ye); ctx.lineTo(p.l + cw, ye); ctx.stroke();
                 ctx.setLineDash([]);
+            }
 
-                // Score badge w legendzie
-                var score = ema.alarm_score || 0;
-                var zoneName, zoneClr;
-                if (score >= ema.zone_yellow)      { zoneName='RED';    zoneClr='#f87171'; }
-                else if (score >= ema.zone_green)  { zoneName='YELLOW'; zoneClr='#fbbf24'; }
-                else                               { zoneName='GREEN';  zoneClr='#4ade80'; }
-                var badge = document.getElementById('scoreZoneBadge');
-                if (badge) {
+            // Legend: EMA value
+            var elER = document.getElementById('legendEmaRate');
+            if (elER) {
+                elER.textContent = hasEma ? ('EMA ' + fmtV(ema.ema_rate) + ' ml/h') : '';
+                elER.style.display = hasEma ? '' : 'none';
+            }
+
+            // Score badge
+            var score = ema.alarm_score || 0;
+            var badge = document.getElementById('scoreZoneBadge');
+            if (badge) {
+                if (hasEma) {
+                    var zoneName, zoneClr;
+                    if      (score >= ema.zone_yellow) { zoneName='RED';    zoneClr='#f87171'; }
+                    else if (score >= ema.zone_green)  { zoneName='YELLOW'; zoneClr='#fbbf24'; }
+                    else                               { zoneName='GREEN';  zoneClr='#4ade80'; }
                     badge.textContent = 'Score: ' + score.toFixed(1) + ' \u25B2 ' + zoneName;
                     badge.style.color = zoneClr;
                     badge.style.display = '';
+                } else {
+                    badge.style.display = 'none';
                 }
-            } else {
-                var elER = document.getElementById('legendEmaRate');
-                if (elER) elER.style.display = 'none';
-                var badge = document.getElementById('scoreZoneBadge');
-                if (badge) badge.style.display = 'none';
             }
-
-            // Data line (szara)
-            ctx.strokeStyle='rgba(148,163,184,0.28)'; ctx.lineWidth=1.5;
-            ctx.beginPath(); var first=true;
-            for (var i=0; i<visPts.length; i++) {
-                if (visPts[i].rate_ml_h<=0) continue;
-                var rawY = visPts[i].rate_ml_h;
-                var clampedY = Math.min(rawY, yMax);  // cap na górnej krawędzi
-                var x=xOf(visPts[i].ts), y=yOf(clampedY);
-                if (first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);
-            }
-            ctx.stroke();
-
-            // Data points — szare
-            for (var i=0; i<visPts.length; i++) {
-                if (visPts[i].rate_ml_h<=0) continue;
-                var clampedY = Math.min(visPts[i].rate_ml_h, yMax);
-                ctx.beginPath(); ctx.arc(xOf(visPts[i].ts), yOf(clampedY), 4, 0, Math.PI*2);
-                ctx.fillStyle='rgba(100,116,139,0.85)'; ctx.fill();
-            }
-
-            drawTimeAxisScrollable(ctx, minTs, maxTs, W, H, p);
-
-            if (!visPts.length) {
-                ctx.fillStyle=CC.txt; ctx.font='13px sans-serif'; ctx.textAlign='center';
-                ctx.fillText('No data yet', W/2, H/2);
-            }
-
-            // Jump to latest data (right edge) on load
-            scrollEl.scrollLeft = scrollEl.scrollWidth;
         }
-
-        function scrollRateChart(dir) {
-            var el = document.getElementById('chartRateScroll');
-            if (!el) return;
-            el.scrollTo({ left: el.scrollLeft + dir * el.offsetWidth * 0.5, behavior: 'smooth' });
-        }
-
-        function scrollRateChartEdge(dir) {
-            var el = document.getElementById('chartRateScroll');
-            if (!el) return;
-            el.scrollTo({ left: dir > 0 ? el.scrollWidth : 0, behavior: 'smooth' });
-        }
-
-        // Long-press threshold — keep in sync with #define CHART_LONGPRESS_MS in html_pages.cpp
-        var CHART_LONGPRESS_MS = 1000;
-
-        (function() {
-            function setupScrollBtn(id, dir) {
-                var btn = document.getElementById(id);
-                if (!btn) return;
-                var timer = null;
-                var active = false;
-
-                function onStart(e) {
-                    active = true;
-                    timer = setTimeout(function() {
-                        timer = null;
-                        if (active) scrollRateChartEdge(dir);
-                    }, CHART_LONGPRESS_MS);
-                }
-
-                function onEnd(e) {
-                    if (!active) return;
-                    active = false;
-                    if (timer !== null) {
-                        clearTimeout(timer);
-                        timer = null;
-                        scrollRateChart(dir);
-                    }
-                }
-
-                function onCancel() {
-                    active = false;
-                    if (timer !== null) { clearTimeout(timer); timer = null; }
-                }
-
-                btn.addEventListener('mousedown', onStart);
-                btn.addEventListener('mouseup', onEnd);
-                btn.addEventListener('mouseleave', onCancel);
-                btn.addEventListener('touchstart', function(e) { e.preventDefault(); onStart(e); }, { passive: false });
-                btn.addEventListener('touchend',   function(e) { e.preventDefault(); onEnd(e);   }, { passive: false });
-                btn.addEventListener('touchcancel', onCancel);
-            }
-
-            setupScrollBtn('chartScrollLeft',  -1);
-            setupScrollBtn('chartScrollRight',  1);
-        })();
 
 
         function deleteCycleHistory() {
@@ -2215,6 +2116,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                         document.getElementById('algZoneGreen').value = d.zone_green;
                         document.getElementById('algZoneYellow').value= d.zone_yellow;
                         document.getElementById('algInitEma').value   = d.initial_ema;
+                        document.getElementById('algChartYMax').value = chartYMaxOverride !== null ? chartYMaxOverride : '';
                     })
                     .catch(function(e) { console.error('alg-config GET error:', e); });
             }
@@ -2231,6 +2133,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
             var zGreen  = parseFloat(document.getElementById('algZoneGreen').value);
             var zYellow = parseFloat(document.getElementById('algZoneYellow').value);
             var initEma = parseFloat(document.getElementById('algInitEma').value);
+            var chartYMaxRaw = document.getElementById('algChartYMax').value.trim();
+            var chartYMaxVal = chartYMaxRaw === '' ? NaN : parseFloat(chartYMaxRaw);
 
             var err = '';
             if (isNaN(alpha)   || alpha < 0.05 || alpha > 0.50)        err = 'EMA Alpha: 0.05–0.50';
@@ -2240,6 +2144,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
             else if (isNaN(zGreen) || zGreen < 1 || zGreen > 200)      err = 'Zone Green: 1–200';
             else if (isNaN(zYellow) || zYellow <= zGreen || zYellow > 500) err = 'Zone Yellow: must be > Zone Green and ≤ 500';
             else if (isNaN(initEma) || initEma < 1 || initEma > 500)   err = 'Initial EMA: 1–500 ml/h';
+            else if (!isNaN(chartYMaxVal) && (chartYMaxVal < 10 || chartYMaxVal > 5000)) err = 'Chart Y-Max: 10–5000 ml/h (or blank for auto)';
 
             if (err) {
                 errEl.textContent = err;
@@ -2266,6 +2171,8 @@ const char* DASHBOARD_HTML = R"rawliteral(
             .then(function(r) { return r ? r.json() : null; })
             .then(function(d) {
                 if (d && d.success) {
+                    // chart Y-max is RAM-only — store before closing panel
+                    chartYMaxOverride = isNaN(chartYMaxVal) ? null : chartYMaxVal;
                     toggleAlgSettings();
                     alert('Algorithm settings saved.');
                 } else {

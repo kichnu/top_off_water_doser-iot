@@ -5,10 +5,6 @@
 #include "../core/logging.h"
 #include <math.h>
 
-#include "../algorithm/water_algorithm.h"  // <-- DODAJ
-
-
-
 
 bool pumpRunning = false;
 unsigned long pumpStartTime = 0;
@@ -16,7 +12,6 @@ unsigned long pumpDuration = 0;
 String currentActionType = "";
 
 static bool pumpActive = false;
-static bool manualPumpActive = false;
 static bool directPumpMode = false;
 
 void initPumpController() {
@@ -60,26 +55,9 @@ void updatePumpController() {
             directPumpMode = false;
             LOG_INFO("");
             LOG_INFO("Direct pump safety timeout reached - pump stopped");
-        } else if (currentActionType == "MANUAL_NORMAL") {
-            // Access water algorithm to update daily volume
-            waterAlgorithm.addManualVolume(volumeML);
-            LOG_INFO("");
-            LOG_INFO("✅ MANUAL_NORMAL volume added to daily total: %dml", volumeML);
-        } else if (currentActionType == "MANUAL_EXTENDED") {
-            LOG_INFO("");
-            LOG_INFO("ℹ️ MANUAL_EXTENDED (calibration) - NOT added to daily volume");
         }
 
         currentActionType = "";
-    }
-
-      static bool wasManualActive = false;
-    if (wasManualActive && !manualPumpActive && !pumpRunning && !directPumpMode) {
-        waterAlgorithm.onManualPumpComplete();
-        wasManualActive = false;
-    }
-    if (manualPumpActive) {
-        wasManualActive = true;
     }
 }
 
@@ -98,16 +76,6 @@ bool triggerPump(uint16_t durationSeconds, const String& actionType) {
         LOG_INFO("Pump trigger blocked - globally disabled");
         return false;
     }
-    
-    // TYLKO dla manual pump notify algorithm
-    if (actionType.startsWith("MANUAL")) {
-        if (!waterAlgorithm.requestManualPump(durationSeconds * 1000)) {
-            LOG_WARNING("");
-            LOG_WARNING("Algorithm rejected manual pump request");
-            return false;
-        }
-    }
-    // Dla AUTO_PUMP nie wywołuj requestManualPump!
     
     digitalWrite(ATO_PUMP_RELAY_PIN, LOW);
     pumpRunning = true;
@@ -149,13 +117,6 @@ void stopPump() {
         if (directPumpMode) {
             directPumpMode = false;
             LOG_INFO("Direct pump stopped via stopPump()");
-        } else if (currentActionType == "MANUAL_NORMAL") {
-            waterAlgorithm.addManualVolume(volumeML);
-            LOG_INFO("");
-            LOG_INFO("MANUAL_NORMAL stopped early: %dml (available volume updated)", volumeML);
-        } else if (currentActionType == "MANUAL_EXTENDED") {
-            LOG_INFO("");
-            LOG_INFO("MANUAL_EXTENDED (calibration) stopped - NOT added to volume");
         }
 
         currentActionType = "";

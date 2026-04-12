@@ -194,8 +194,6 @@ void WaterAlgorithm::update() {
         case STATE_ERROR:
             break;
 
-        case STATE_MANUAL_OVERRIDE:
-            break;
     }
 }
 
@@ -506,11 +504,6 @@ void WaterAlgorithm::handleSystemDisable() {
         return;
     }
 
-    if (currentState == STATE_MANUAL_OVERRIDE) {
-        if (!systemWasDisabled) systemWasDisabled = true;
-        return;
-    }
-
     if (currentState == STATE_ERROR || currentState == STATE_LOGGING) {
         if (!systemWasDisabled) systemWasDisabled = true;
         return;
@@ -562,48 +555,6 @@ void WaterAlgorithm::checkResetButton() {
 }
 
 // ============================================================
-// MANUAL PUMP
-// ============================================================
-
-bool WaterAlgorithm::requestManualPump(uint16_t durationMs) {
-    if (currentState != STATE_IDLE) {
-        LOG_WARNING("Manual pump rejected — not in IDLE (state: %s)", getStateString());
-        return false;
-    }
-    currentState = STATE_MANUAL_OVERRIDE;
-    stateStartMs = millis();
-    LOG_INFO("Manual pump started (%d ms)", durationMs);
-    return true;
-}
-
-void WaterAlgorithm::onManualPumpComplete() {
-    if (currentState == STATE_MANUAL_OVERRIDE) {
-        LOG_INFO("Manual pump complete — returning to IDLE");
-        currentState = STATE_IDLE;
-        stateStartMs = millis();
-        resetSensorProcess();
-    }
-}
-
-void WaterAlgorithm::addManualVolume(uint16_t volumeMl) {
-    // Odśwież bazę z FRAM (auto cykle), dodaj ręczne ml ponad to.
-    // Bez tego dodajemy do stale cache'u który może być już nadmuchany przez poprzednie addManualVolume.
-    uint16_t fromFram = scanRolling24h();
-    rolling24hVolumeMl = (uint32_t)fromFram + volumeMl > 65000u
-                         ? 65000u
-                         : (uint16_t)(fromFram + volumeMl);
-
-    LOG_INFO("Manual volume added: %d ml (FRAM=%d ml + manual=%d ml = rolling24h: %d ml)",
-             volumeMl, fromFram, volumeMl, rolling24hVolumeMl);
-
-    if (rolling24hVolumeMl >= config.daily_limit_ml) {
-        LOG_WARNING("Manual pump pushed 24h total over limit: %d >= %d ml → ERROR",
-                    rolling24hVolumeMl, config.daily_limit_ml);
-        startErrorSignal(ERROR_DAILY_LIMIT);
-    }
-}
-
-// ============================================================
 // RESET / RECOVERY
 // ============================================================
 
@@ -618,7 +569,6 @@ void WaterAlgorithm::resetFromError() {
 
 bool WaterAlgorithm::resetSystem() {
     if (currentState == STATE_LOGGING) return false;
-    if (currentState == STATE_MANUAL_OVERRIDE) return false;
 
     if (isPumpActive()) stopPump();
 
@@ -671,7 +621,6 @@ const char* WaterAlgorithm::getStateString() const {
         case STATE_PUMPING:         return "PUMPING";
         case STATE_LOGGING:         return "LOGGING";
         case STATE_ERROR:           return "ERROR";
-        case STATE_MANUAL_OVERRIDE: return "MANUAL";
         default:                    return "UNKNOWN";
     }
 }
@@ -695,8 +644,6 @@ String WaterAlgorithm::getStateDescription() const {
             if (lastError == ERROR_DAILY_LIMIT)   return "Daily limit reached — reset required";
             if (lastError == ERROR_RED_ALERT)     return "Rate anomaly — reset required";
             return String("Error: code ") + (int)lastError + " — reset required";
-        case STATE_MANUAL_OVERRIDE:
-            return "Manual pump active";
         default:
             return "Unknown";
     }
