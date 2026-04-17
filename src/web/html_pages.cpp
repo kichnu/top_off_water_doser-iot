@@ -12,7 +12,7 @@ const char* LOGIN_HTML = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Top Off Water - Login</title>
+    <title>ATO & Kalkwasser Dosing - Login</title>
     <style>
         :root {
             --bg-primary: #0a0f1a;
@@ -240,7 +240,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Top Off Water</title>
+    <title>ATO & Kalkwasser Dosing</title>
     <style>
         :root {
             --bg-primary: #0a0f1a;
@@ -969,7 +969,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
                 <div class="card-header-icon" style="background: rgba(129, 140, 248, 0.15);">
                     <svg fill="currentColor" style="color: #818cf8;" viewBox="0 0 24 24"><path d="M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 3.21-1.81 6-4.72 7.28L13 17v5c5.05-.56 9-4.78 9-9.93 0-5.45-4.22-9.92-9-10.02zm-2 0C5.95 2.61 2 6.83 2 12c0 4.64 3.17 8.6 7.2 9.86v-2.09c-2.89-1.14-4.96-3.87-4.96-7.05 0-3.25 2-6 4.76-7.72V2.05z"/></svg>
                 </div>
-                <h2>ATO &amp; Kalkwasser Process Monitor</h2>
+                <h2>ATO Process Monitor</h2>
             </div>
             <div style="display:flex;gap:8px;margin-bottom:10px;">
                 <button class="btn btn-secondary" onclick="loadCycleHistory()" id="loadCyclesBtn" style="flex:1;">Load History</button>
@@ -1082,7 +1082,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
         <!-- Footer -->
         <div class="footer-info">
-            Top Off Water System • v2.1
+            ATO & Kalkwasser Dosing• v3.0
         </div>
     </div>
 
@@ -2212,8 +2212,7 @@ const char* DASHBOARD_HTML = R"rawliteral(
 
             // Mix slots: [0,6,12,18]:15
             // Bit i in mixDoneBits = slot i was executed today (set by firmware).
-            var isMixState = (kalkState === 'MIXING' || kalkState === 'SETTLING' ||
-                              kalkState === 'WAIT_MIX');
+            var isMixState = (kalkState === 'MIXING' || kalkState === 'WAIT_MIX');
             KALK_MIX_BASES.forEach(function(base, i) {
                 var slotMin   = base * 60 + 15;
                 var isNowSlot = (nowTotalMin >= slotMin && nowTotalMin < slotMin + 360);
