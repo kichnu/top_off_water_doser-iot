@@ -23,6 +23,8 @@
 #include "provisioning/ap_core.h"
 #include "provisioning/ap_server.h"
 
+static uint32_t g_restartAtTs = 0;  // docelowy timestamp restartu (lokalna północ); 0 = wyłączony
+
 void setup() {
     // Initialize core systems
     initLogging();
@@ -171,26 +173,46 @@ void setup() {
     LOG_INFO("Current Time: %s", getCurrentTimestamp().c_str());
     LOG_INFO("=== System initialization complete ===");
     LOG_INFO("====================================");
+
+    // Wyznaczyć docelowy czas restartu = najbliższa lokalna północ
+    // Guard: RTC musi działać i mieć sensowny czas (rok > 2020)
+    uint32_t nowTs = (uint32_t)getUnixTimestamp();
+    struct tm t;
+    time_t ts = (time_t)nowTs;
+    localtime_r(&ts, &t);
+    if (isRTCWorking() && t.tm_year > 120) {  // tm_year: lata od 1900; 120 = rok 2020
+        uint32_t secOfDay = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec;
+        uint32_t midnight = nowTs - secOfDay + 86400UL;  // następna lokalna północ (UTC)
+        g_restartAtTs = midnight;
+        LOG_INFO("Daily restart scheduled at next midnight (ts=%lu, in %lus)", midnight, midnight - nowTs);
+    } else {
+        g_restartAtTs = 0;  // fallback: restart wyłączony (brak RTC)
+        LOG_WARNING("RTC not ready — daily midnight restart disabled");
+    }
 }
 
 void loop() {
     // Production mode loop - full water system
     static unsigned long lastUpdate = 0;
     unsigned long now = millis();
-    
-    // DAILY RESTART CHECK - 24 godziny
-    if (now > 86400000UL) { // 24h w ms
-        Serial.println("=== DAILY RESTART: 24h uptime reached ===");
-        
-        if (isPumpActive())              stopPump();
-        if (isMixingPumpActive())        stopMixingPump();
-        if (isPeristalticPumpRunning())  stopPeristalticPump();
-        audioPlayer.stop();
-        delay(1000);
-        
-        Serial.println("System restarting in 3 seconds...");
-        delay(3000);
-        ESP.restart();
+
+    // DAILY RESTART CHECK — o lokalnej północy (00:00)
+    // Guard: minimalny uptime 30 min (zabezpieczenie przed pętlą restart jeśli start tuż przed północą)
+    if (g_restartAtTs > 0 && now > 1800000UL) {
+        uint32_t nowTs = (uint32_t)getUnixTimestamp();
+        if (nowTs >= g_restartAtTs) {
+            Serial.println("=== DAILY RESTART: midnight reached ===");
+
+            if (isPumpActive())              stopPump();
+            if (isMixingPumpActive())        stopMixingPump();
+            if (isPeristalticPumpRunning())  stopPeristalticPump();
+            audioPlayer.stop();
+            delay(1000);
+
+            Serial.println("System restarting in 3 seconds...");
+            delay(3000);
+            ESP.restart();
+        }
     }
     
     // Sensor + algorytm — każdy cykl loop
