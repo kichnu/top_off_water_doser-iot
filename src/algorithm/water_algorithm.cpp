@@ -511,7 +511,7 @@ void WaterAlgorithm::handleSystemDisable() {
 
     LOG_WARNING("SYSTEM DISABLE — interrupting cycle (state: %s)", getStateString());
 
-    if (isPumpActive()) {
+    if (isPumpActive() && !isDirectPumpMode()) {
         stopPump();
         LOG_WARNING("Pump stopped by system disable");
     }
