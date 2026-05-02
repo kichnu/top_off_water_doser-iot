@@ -48,6 +48,7 @@ void setup() {
 
         Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
         Wire.setClock(100000);
+        delay(50);  // ESP32-S3 I2C needs settling time after Wire.begin()
 
         if (!initFRAM()) {
             LOG_INFO("WARNING: FRAM initialization failed!");
@@ -106,9 +107,20 @@ void setup() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);  // Init I2C before FRAM
     Wire.setClock(100000);
 
+
+    delay(2000);
+
     initNVS();          // initNVS() wywołuje initFRAM() wewnętrznie (config.cpp)
     loadVolumeFromNVS();
     waterAlgorithm.initFromFRAM();
+    // ESP32-S3 new I2C driver enters INVALID_STATE after bursts of ring-buffer reads.
+    // Full bus reset + re-register FRAM so subsequent reads (kalk, audio, credentials, RTC) are clean.
+    Wire.end();
+    delay(10);
+    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+    Wire.setClock(100000);
+    delay(10);
+    framReconnect();
     initMixingPump();
     initPeristalticPump();
     audioPlayer.init();

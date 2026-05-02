@@ -125,6 +125,7 @@ static_assert(sizeof(KalkwasserConfig) == 20, "KalkwasserConfig must be 20 bytes
 
 // Basic FRAM functions
 bool initFRAM();
+bool framReconnect();
 bool loadVolumeFromFRAM(float& volume);
 bool saveVolumeToFRAM(float volume);
 bool verifyFRAM();

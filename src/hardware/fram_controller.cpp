@@ -25,6 +25,19 @@ uint16_t calculateChecksum(uint8_t* data, size_t len) {
     return sum;
 }
 
+// Re-register FRAM device on I2C bus after Wire.end()/Wire.begin() reset.
+// Call this whenever the Wire bus is re-initialized mid-session.
+bool framReconnect() {
+    if (!fram.begin(0x50)) {
+        framInitialized = false;
+        LOG_ERROR("framReconnect: FRAM not found at 0x50 after I2C reset");
+        return false;
+    }
+    framInitialized = true;
+    LOG_INFO("framReconnect: FRAM re-registered on I2C bus");
+    return true;
+}
+
 bool initFRAM() {
     LOG_INFO("");
     LOG_INFO("Initializing FRAM at address 0x50...");
@@ -571,23 +584,43 @@ bool writeCredentialsToFRAM(const FRAMCredentials& creds) {
         LOG_ERROR("FRAM not initialized for credentials write");
         return false;
     }
-    
-    // Write credentials structure to FRAM
-    fram.write(FRAM_CREDENTIALS_ADDR, (uint8_t*)&creds, sizeof(FRAMCredentials));
-    
-    // Verify write by reading back
-    FRAMCredentials verify_creds;
-    fram.read(FRAM_CREDENTIALS_ADDR, (uint8_t*)&verify_creds, sizeof(FRAMCredentials));
-    
-    // Compare written data
-    if (memcmp(&creds, &verify_creds, sizeof(FRAMCredentials)) != 0) {
-        LOG_ERROR("");
-        LOG_ERROR("FRAM credentials write verification failed!");
-        return false;
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0 || !framInitialized) {
+            // Either:
+            //   attempt > 0 : first write failed verification (I2C was in INVALID_STATE)
+            //   !framInitialized : initFRAM() never succeeded at boot (ESP32-S3 timing quirk)
+            // Full Wire reset + re-init FRAM to recover.
+            LOG_WARNING("FRAM credentials write: recovering I2C bus (attempt %d, framInit=%d)",
+                        attempt + 1, (int)framInitialized);
+            Wire.end();
+            delay(50);
+            Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+            Wire.setClock(100000);
+            delay(50);
+            if (!initFRAM()) {
+                LOG_ERROR("FRAM re-init failed during credentials write recovery");
+                return false;
+            }
+        }
+
+        fram.write(FRAM_CREDENTIALS_ADDR, (uint8_t*)&creds, sizeof(FRAMCredentials));
+
+        FRAMCredentials verify_creds;
+        fram.read(FRAM_CREDENTIALS_ADDR, (uint8_t*)&verify_creds, sizeof(FRAMCredentials));
+
+        if (memcmp(&creds, &verify_creds, sizeof(FRAMCredentials)) == 0) {
+            LOG_INFO("");
+            LOG_INFO("Credentials written to FRAM at address 0x%04X", FRAM_CREDENTIALS_ADDR);
+            return true;
+        }
+
+        LOG_WARNING("FRAM write verification mismatch (attempt %d)", attempt + 1);
     }
-    LOG_INFO("");
-    LOG_INFO("Credentials written to FRAM at address 0x%04X", FRAM_CREDENTIALS_ADDR);
-    return true;
+
+    LOG_ERROR("");
+    LOG_ERROR("FRAM credentials write failed after I2C recovery attempt");
+    return false;
 }
 
 bool verifyCredentialsInFRAM() {

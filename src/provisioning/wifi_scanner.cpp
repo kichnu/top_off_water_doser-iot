@@ -40,8 +40,8 @@ String scanWiFiNetworksJSON(bool sortByRSSI, bool removeDuplicates) {
     LOG_INFO("Found %d networks", networkCount);
     
     // Create JSON document (allocate enough for ~20 networks)
-    DynamicJsonDocument doc(4096);
-    JsonArray networks = doc.createNestedArray("networks");
+    JsonDocument doc;
+    JsonArray networks = doc["networks"].to<JsonArray>();
     
     // Track seen SSIDs for duplicate removal
     String seenSSIDs[50];  // Max 50 unique SSIDs
@@ -79,7 +79,7 @@ String scanWiFiNetworksJSON(bool sortByRSSI, bool removeDuplicates) {
         }
         
         // Add network to JSON
-        JsonObject network = networks.createNestedObject();
+        JsonObject network = networks.add<JsonObject>();
         network["ssid"] = ssid;
         network["rssi"] = rssi;
         network["encryption"] = encryption;

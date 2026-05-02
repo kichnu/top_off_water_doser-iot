@@ -25,7 +25,7 @@ bool startWebServer() {
     // ===== MAIN SETUP PAGE =====
     webServer->on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         LOG_INFO("Serving setup page to client: %s", request->client()->remoteIP().toString().c_str());
-        request->send_P(200, "text/html", getSetupPageHTML());
+        request->send(200, "text/html", getSetupPageHTML());
     });
 
     // ===== API: Current config (non-sensitive, for pre-population) =====

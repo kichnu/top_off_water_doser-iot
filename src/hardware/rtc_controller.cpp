@@ -194,10 +194,19 @@ void initializeRTC() {
     batteryIssueDetected = false;
     
     LOG_INFO("Attempting to initialize external DS3231 RTC...");
-    
+
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(100000);
-    
+
+    // I2C bus scan: log all responding addresses (debug, remove after HW verified)
+    LOG_INFO("I2C scan (SDA=GPIO%d, SCL=GPIO%d):", I2C_SDA_PIN, I2C_SCL_PIN);
+    for (byte addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            LOG_INFO("  I2C device found at 0x%02X", addr);
+        }
+    }
+
     Wire.beginTransmission(0x68);
     byte error = Wire.endTransmission();
     
@@ -349,11 +358,20 @@ String getCurrentTimestamp() {
         }
         return lastValidTimestamp.length() > 0 ? lastValidTimestamp : "RTC_NOT_INITIALIZED";
     }
-    
+
+    if (useInternalRTC) {
+        time_t ts = (time_t)getUnixTimestamp();
+        struct tm timeinfo;
+        localtime_r(&ts, &timeinfo);
+        char buffer[32];
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        return String(buffer);
+    }
+
     const int MAX_RETRIES = 3;
     DateTime now;
     bool validRead = false;
-    
+
     for (int retry = 0; retry < MAX_RETRIES; retry++) {
         now = rtc.now();
         

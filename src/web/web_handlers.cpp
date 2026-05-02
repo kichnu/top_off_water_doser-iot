@@ -25,7 +25,7 @@ void handleDashboard(AsyncWebServerRequest* request) {
         request->redirect("login");
         return;
     }
-    AsyncWebServerResponse* response = request->beginResponse_P(
+    AsyncWebServerResponse* response = request->beginResponse(
         200, "text/html", (const uint8_t*)DASHBOARD_HTML, strlen(DASHBOARD_HTML));
     request->send(response);
 }
@@ -37,7 +37,7 @@ void handleLoginPage(AsyncWebServerRequest* request) {
         return;
     }
 
-    AsyncWebServerResponse* response = request->beginResponse_P(
+    AsyncWebServerResponse* response = request->beginResponse(
         200, "text/html", (const uint8_t*)LOGIN_HTML, strlen(LOGIN_HTML));
     request->send(response);
 }

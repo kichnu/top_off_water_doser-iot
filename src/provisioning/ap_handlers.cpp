@@ -90,7 +90,7 @@ void handleProvConfig(AsyncWebServerRequest *request) {
     bool hasCfg = loadTopOffConfigFromFRAM(algCfg) &&
                   algCfg.is_configured == TOPOFF_CONFIG_MAGIC;
 
-    StaticJsonDocument<192> doc;
+    JsonDocument doc;
     doc["device_name"]   = hasExisting ? String(existingFram.device_name) : "";
     doc["ema_alpha"]     = hasCfg ? (double)algCfg.ema_alpha : (double)DEFAULT_EMA_ALPHA;
     doc["is_configured"] = hasExisting;
@@ -114,7 +114,7 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
 
     // Helper: send error response
     auto sendError = [&](int code, const String& msg, const String& field = "") {
-        StaticJsonDocument<256> doc;
+        JsonDocument doc;
         doc["success"] = false;
         doc["error"]   = msg;
         if (field.length()) doc["field"] = field;
@@ -178,7 +178,7 @@ void handleConfigureSubmit(AsyncWebServerRequest *request, JsonVariant &json) {
     LOG_INFO("Algorithm config saved: alpha=%.2f", emaAlpha);
 
     // --- Success -------------------------------------------------------------
-    StaticJsonDocument<192> respDoc;
+    JsonDocument respDoc;
     respDoc["success"]     = true;
     respDoc["message"]     = "Configuration saved. Please restart the device.";
     respDoc["device_name"] = deviceName;

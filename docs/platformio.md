@@ -1,0 +1,60 @@
+; DOZOWNIK - PlatformIO Configuration
+; ESP32-S3-ZERO (Seeed Studio XIAO)
+; 
+; Środowiska:
+;   production - bez CLI, minimalny kod
+;   debug      - pełne CLI i logi
+
+[env]
+platform = espressif32
+board = seeed_xiao_esp32s3
+framework = arduino
+
+; Upload & Monitor
+monitor_speed = 115200
+upload_speed = 921600
+
+; Partition scheme - duża aplikacja
+board_build.partitions = huge_app.csv
+
+; Flash settings
+board_build.flash_mode = dio
+board_build.f_flash = 80000000L
+
+; Common includes
+build_flags = 
+    -DARDUINO_USB_MODE=1
+    -DARDUINO_USB_CDC_ON_BOOT=1
+    -DBOARD_HAS_PSRAM
+    -Isrc/config
+    -Isrc/hardware
+    -Isrc/web
+    -Isrc/algorithm
+    -Isrc/rtc_controller
+
+; Common libraries
+lib_deps = 
+    Wire
+    mathieucarbou/AsyncTCP@^3.2.14
+    mathieucarbou/ESPAsyncWebServer@^3.3.23
+    bblanchon/ArduinoJson@^7.2.1
+
+; =============================================================================
+; PRODUCTION - bez CLI, minimalne logi
+; =============================================================================
+[env:production]
+build_flags = 
+    ${env.build_flags}
+    -DENABLE_CLI=0
+    -DCORE_DEBUG_LEVEL=0
+    -DPRODUCTION_MODE=1
+
+; =============================================================================
+; DEBUG - pełne CLI i logi
+; =============================================================================
+[env:debug]
+build_flags = 
+    ${env.build_flags}
+    -DENABLE_CLI=1
+    -DCORE_DEBUG_LEVEL=3
+    -DDEBUG_MODE=1
