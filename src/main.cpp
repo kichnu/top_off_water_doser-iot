@@ -19,6 +19,7 @@
 #include "hardware/mixing_pump.h"
 #include "hardware/peristaltic_pump.h"
 #include "hardware/audio_player.h"
+#include "hardware/status_led.h"
 #include "provisioning/prov_detector.h"
 #include "provisioning/ap_core.h"
 #include "provisioning/ap_server.h"
@@ -103,6 +104,7 @@ void setup() {
 
     initWaterSensor();
     initPumpController();
+    initStatusLed();
 
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);  // Init I2C before FRAM
     Wire.setClock(100000);
@@ -235,6 +237,7 @@ void loop() {
     // Pozostałe systemy co 100 ms
     if (now - lastUpdate >= 100) {
         updatePumpController();
+        updateStatusLed();
         audioPlayer.update();
         updateSessionManager();
         updateRateLimiter();
