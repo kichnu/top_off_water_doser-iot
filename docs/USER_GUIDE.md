@@ -10,7 +10,26 @@ Automatyczny system uzupełniania wody (ATO — Automatic Top-Off) dla akwarium 
 
 Urządzenie startuje zawsze w **Service Mode** — przez pierwsze 15 minut pompy i scheduler są zatrzymane. Jest to celowe: czas na sprawdzenie instalacji, podłączenie węży, weryfikację czujników przed pierwszą dolewką. Po 15 minutach system automatycznie przechodzi do **Auto Mode**.
 
-Jeśli urządzenie nie ma jeszcze skonfigurowanej sieci WiFi, aktywuje portal konfiguracyjny (AP "ATO-Setup") — podłącz się przez telefon/laptop i wpisz dane sieci oraz hasło panelu.
+Jeśli urządzenie nie ma jeszcze skonfigurowanej sieci WiFi, aktywuje portal konfiguracyjny:
+
+- Sieć WiFi: **`ESP32-WATER-SETUP`**
+- Hasło sieci: **`setup12345`**
+- Po podłączeniu otwórz przeglądarkę — portal pojawi się automatycznie (captive portal) lub przejdź ręcznie pod adres `192.168.4.1`
+
+---
+
+## Dioda statusu (LED)
+
+Dioda LED na obudowie informuje o stanie systemu bez konieczności otwierania panelu:
+
+| Wzorzec | Stan |
+|---------|------|
+| 3× szybki błysk, 2s przerwa | **BŁĄD** — wymagana interwencja (patrz: sytuacje wymagające interwencji) |
+| Świeci ciągle | **Pompa aktywna** — dolewka lub kalkwasser w toku |
+| 2× błysk co 3s | **Service Mode** — system wstrzymany |
+| Szybkie mruganie 200ms | **Łączenie z WiFi** (faza rozruchu) |
+| Pojedynczy puls co 3s | **Auto Mode** — praca normalna, WiFi OK |
+| Puls co 3s, co trzeci = 3× szybki błysk | **Auto Mode** — praca normalna, **brak WiFi** (ograniczona funkcjonalność) |
 
 ---
 
@@ -101,12 +120,7 @@ Monitoruje poziom wody w zbiorniku RO/uzupełniającej. Ostrzeżenia narastają 
 
 ## Restart i odporność na awarie
 
-- Urządzenie restartuje się automatycznie co 24h (domyślnie ok. 3:00) — wszystkie pompy zatrzymywane bezpiecznie przed restartem
+- Urządzenie restartuje się automatycznie **o północy (00:00)** czasu lokalnego — wszystkie pompy zatrzymywane bezpiecznie przed restartem
 - Konfiguracja EMA, historia cykli i ustawienia są zapisane w FRAM (nieulotna pamięć, przeżywa wyłączenie zasilania)
 - Stan kalkwassera (ON/OFF) przeżywa restart, resetuje się tylko ręcznie przez panel
 - Po każdym restarcie: 15 min Service Mode → automatyczny powrót do Auto Mode
-
-
-
-python docs/fetch_sim.py --host 192.168.10.2 --password PYd6mX8qofnhvGyVPsSqEun8Oybj0B9M
-
